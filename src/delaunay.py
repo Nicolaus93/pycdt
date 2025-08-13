@@ -248,7 +248,9 @@ def find_containing_triangle(
             point_vector = point - triangle[e1]
 
             # If cross product is negative, the point is on the "outside" of this edge
-            cross_prod = edge_vector[0] * point_vector[1] - edge_vector[1] * point_vector[0]
+            cross_prod = (
+                edge_vector[0] * point_vector[1] - edge_vector[1] * point_vector[0]
+            )
             if cross_prod < 0:
                 # Get the adjacent triangle for this edge
                 adjacent_idx = triangulation.triangle_neighbors[triangle_idx, i]
