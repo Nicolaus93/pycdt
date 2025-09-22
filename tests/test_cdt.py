@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.build import triangulate
+from pycdt.build import triangulate
 
 
 def test_triangulation():

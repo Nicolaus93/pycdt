@@ -363,12 +363,17 @@ def remove_super_triangle_triangles(
     triangulation.all_points = triangulation.all_points[:-3]
 
 
-def triangulate(points: NDArray[np.floating], debug: bool = False):
+def triangulate(
+    points: NDArray[np.floating],
+    margin: float = 10.0,
+    debug: bool = False
+):
     """
     Implement Delaunay triangulation using the incremental algorithm with efficient
     adjacency tracking.
 
     :param points: Input points to triangulate
+    :param margin: initial margin for the supertriangle points
     :param debug: plot debug images
     :return: List of triangles forming the Delaunay triangulation
     """
@@ -383,7 +388,7 @@ def triangulate(points: NDArray[np.floating], debug: bool = False):
     sorted_points = normalized_points
 
     # Initialize triangulation with super triangle
-    triangulation = initialize_triangulation(sorted_points, margin=5.0)
+    triangulation = initialize_triangulation(sorted_points, margin=margin)
 
     n_original_points = len(sorted_points)
 

@@ -19,3 +19,6 @@ dev-dependencies = [
 
 [tool.uv.sources]
 pycdt = { path = "pycdt" }
+
+[tool.setuptools]
+packages = ["pycdt"]
