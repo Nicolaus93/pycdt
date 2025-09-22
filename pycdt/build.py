@@ -2,9 +2,9 @@ import numpy as np
 from loguru import logger
 from numpy._typing import NDArray
 
-from src.delaunay import Triangulation
-from src.topology import lawson_swapping, reorder_neighbors_for_triangle
-from src.geometry import point_inside_triangle, ensure_ccw_triangle, is_inside_domain
+from pycdt.delaunay import Triangulation
+from pycdt.topology import lawson_swapping, reorder_neighbors_for_triangle
+from pycdt.geometry import point_inside_triangle, ensure_ccw_triangle, is_inside_domain
 
 
 def find_containing_triangle(

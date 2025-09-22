@@ -117,7 +117,7 @@ black .
 ruff check --fix .
 
 # Type checking
-mypy src/
+mypy pycdt/
 ```
 
 ## References

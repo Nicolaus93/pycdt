@@ -3,8 +3,8 @@ from loguru import logger
 from numpy._typing import NDArray
 from shewchuk import incircle_test
 
-from src.delaunay import Triangulation, incircle_test_debug
-from src.geometry import ensure_ccw_triangle
+from pycdt.delaunay import Triangulation, incircle_test_debug
+from pycdt.geometry import ensure_ccw_triangle
 
 
 def find_neighbor_edge_index(

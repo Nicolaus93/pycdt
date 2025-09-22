@@ -5,8 +5,8 @@ from numpy.typing import NDArray
 from dataclasses import dataclass
 from typing import Optional
 
-from src.delaunay import Triangulation
-from src.geometry import orient2d, ensure_ccw_triangle
+from pycdt.delaunay import Triangulation
+from pycdt.geometry import orient2d, ensure_ccw_triangle
 
 
 EPS = 1e-6

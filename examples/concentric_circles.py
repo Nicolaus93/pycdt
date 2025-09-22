@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.build import triangulate, remove_holes
+from pycdt.build import triangulate, remove_holes
 
 
 def generate_concentric_circles(center=(0, 0), num_points=20, debug=False):
