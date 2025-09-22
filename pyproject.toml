@@ -16,3 +16,6 @@ dev-dependencies = [
     "pyright>=1.1.405",
     "pytest>=8.4.1",
 ]
+
+[tool.uv.sources]
+pycdt = { path = "pycdt" }
