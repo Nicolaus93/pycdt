@@ -2,8 +2,7 @@ import numpy as np
 
 from src.build import triangulate
 
-
-def test_triangulation():
+if __name__ == "__main__":
     arr = np.array(
         [
             [24.311, -7.358],
@@ -44,4 +43,6 @@ def test_triangulation():
             [24.538, -6.561],
         ]
     )
-    triangulate(arr)
+
+    yy = triangulate(arr)
+    yy.plot(show=True)

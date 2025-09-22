@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.delaunay import remove_holes, triangulate
+from src.build import triangulate, remove_holes
 
 
 def generate_concentric_circles(center=(0, 0), num_points=20, debug=False):
@@ -44,9 +44,9 @@ def triangle_concentric_circles():
     inner_circle, outer_circle = generate_concentric_circles(num_points=n, debug=True)
     yy = triangulate(np.vstack([outer_circle, inner_circle]), debug=True)
     yy.export_animation_matplotlib("../assets/triangulation.gif")
-    yy.plot()
+    yy.plot(show=True)
     remove_holes(yy, [i for i in range(n)], [[i for i in range(n, 2 * n)]])
-    yy.plot(exclude_super_t=True)
+    yy.plot(show=True)
 
 
 if __name__ == "__main__":

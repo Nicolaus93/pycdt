@@ -17,14 +17,6 @@ repos:
       - id: debug-statements
       - id: mixed-line-ending
 
-  # Black - Code formatter
-  - repo: https://github.com/psf/black
-    rev: 23.12.1
-    hooks:
-      - id: black
-        args: [--line-length=88]
-        language_version: python3
-
   # Ruff - Fast Python linter and formatter
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.12.2
@@ -47,6 +39,7 @@ repos:
     rev: v1.1.345
     hooks:
       - id: pyright
+        language: system
 
   # Bandit - Security linter
   - repo: https://github.com/pycqa/bandit

@@ -43,7 +43,8 @@ pip install -e .
 ## Quick Start
 
 ```python
-from src.delaunay import triangulate
+
+from src.build import triangulate
 import numpy as np
 
 # Generate random points

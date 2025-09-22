@@ -13,5 +13,6 @@ dependencies = [
 
 [tool.uv]
 dev-dependencies = [
+    "pyright>=1.1.405",
     "pytest>=8.4.1",
 ]
