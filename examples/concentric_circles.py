@@ -1,6 +1,6 @@
 import numpy as np
 
-from pycdt.build import triangulate, remove_holes
+from pycdt.build import triangulate
 
 
 def generate_concentric_circles(center=(0, 0), num_points=20, debug=False):
@@ -45,8 +45,9 @@ def triangle_concentric_circles():
     yy = triangulate(np.vstack([outer_circle, inner_circle]), debug=True)
     yy.export_animation_matplotlib("../assets/triangulation.gif")
     yy.plot(show=True)
-    remove_holes(yy, [i for i in range(n)], [[i for i in range(n, 2 * n)]])
-    yy.plot(show=True)
+    # TODO: fix remove_holes args
+    # remove_holes(yy, [i for i in range(n)], [[i for i in range(n, 2 * n)]])
+    # yy.plot(show=True)
 
 
 if __name__ == "__main__":

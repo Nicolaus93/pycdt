@@ -1,17 +1,31 @@
+from dataclasses import dataclass
+
 import numpy as np
 from loguru import logger
 from numpy._typing import NDArray
 
 from pycdt.delaunay import Triangulation
 from pycdt.topology import lawson_swapping, reorder_neighbors_for_triangle
-from pycdt.geometry import point_inside_triangle, ensure_ccw_triangle, is_inside_domain
+from pycdt.geometry import (
+    point_inside_triangle,
+    ensure_ccw_triangle,
+    is_inside_domain,
+    PointInTriangle,
+)
+
+
+@dataclass
+class ContainingTriangle:
+    idx: int
+    position: PointInTriangle
+    opp_v: int | None
 
 
 def find_containing_triangle(
     triangulation: Triangulation,
     point: NDArray[np.floating],
     last_triangle_idx: int,
-) -> int:
+) -> ContainingTriangle:
     """
     Implementation of Lawson's algorithm to find the triangle containing a point.
     Starts from the most recently added triangle and "walks" towards the point.
@@ -42,14 +56,23 @@ def find_containing_triangle(
         v_indices = triangulation.triangle_vertices[triangle_idx]
         triangle = triangulation.all_points[v_indices]
 
-        # Check if the point is inside this triangle
-        if point_inside_triangle(triangle, point):
-            return triangle_idx
+        # Check if the point is inside (or on any edge) this triangle
+        point_position, opp_v = point_inside_triangle(triangle, point)
+        if point_position in (
+            PointInTriangle.inside,
+            PointInTriangle.edge,
+            PointInTriangle.vertex,
+        ):
+            return ContainingTriangle(
+                idx=triangle_idx,
+                position=point_position,
+                opp_v=opp_v,
+            )
 
         # If not inside, find which edge to cross using the adjacent triangles information
         # Get edge indices in the triangle. NOTE!!! => it should be consistent with triangle_neighbors
         edges = [(1, 2), (2, 0), (0, 1)]
-        next_idx = None
+        candidates = []
         for i, (e1, e2) in enumerate(edges):
             # Vector from edge to point
             edge_vector = triangle[e2] - triangle[e1]
@@ -65,13 +88,18 @@ def find_containing_triangle(
 
                 # If there's an adjacent triangle (not a boundary) and we haven't visited it
                 if adjacent_idx != -1 and adjacent_idx not in visited:
-                    next_idx = adjacent_idx
-                    visited.add(adjacent_idx)
-                    break
+                    candidates.append(adjacent_idx)
 
-        if next_idx is None:
-            raise ValueError(f"Couldn't find a triangle containing {point}")
-        triangle_idx = next_idx
+        if not candidates:
+            triangulation.plot(show=True)
+            raise ValueError(
+                f"Couldn't find a triangle containing {point}! Visited: {visited}, triangulation has {len(triangulation.triangle_vertices)}"
+            )
+
+        triangle_idx = candidates.pop()
+        while triangle_idx in visited:
+            triangle_idx = candidates.pop()
+        visited.add(triangle_idx)
 
 
 def get_sorted_points(
@@ -181,6 +209,152 @@ def initialize_triangulation(
     )
 
 
+def insert_point_on_edge(
+    point_idx: int,
+    containing_idx: int,
+    opposite_vertex: int,
+    triangulation: Triangulation,
+    debug: bool = False,
+) -> Triangulation:
+    """
+    Insert a point on an edge of triangle `containing_idx`.
+    If edge is internal, split 2 tris into 4.
+    If edge is boundary, split 1 tri into 2.
+    """
+
+    vA = triangulation.triangle_vertices[containing_idx]
+    nA = triangulation.triangle_neighbors[containing_idx]
+
+    # The edge is formed by the two vertices not equal to vA[opposite_vertex]
+    edge_vertices = [vA[i] for i in range(3) if i != opposite_vertex]
+    apexA = vA[opposite_vertex]
+
+    neighbor_idx = nA[opposite_vertex]
+
+    if neighbor_idx == -1:
+        # --- Boundary case: replace 1 tri with 2 ---
+        tri1_raw = np.array([point_idx, edge_vertices[0], apexA])
+        tri2_raw = np.array([point_idx, apexA, edge_vertices[1]])
+
+        tri1 = ensure_ccw_triangle(tri1_raw, triangulation.all_points)
+        tri2 = ensure_ccw_triangle(tri2_raw, triangulation.all_points)
+
+        # Replace containing triangle with tri1, add tri2
+        triangulation.triangle_vertices[containing_idx] = tri1
+        triangulation.triangle_vertices = np.vstack(
+            (triangulation.triangle_vertices, [tri2])
+        )
+        idx_tri2 = len(triangulation.triangle_vertices) - 1
+
+        # Expand neighbors
+        triangulation.triangle_neighbors = np.vstack(
+            (triangulation.triangle_neighbors, np.full((1, 3), -1, int))
+        )
+
+        # Neighbor templates
+        neighs_t1 = [
+            nA[opposite_vertex],  # same neighbor as original across unchanged edge
+            idx_tri2,  # sibling
+            nA[(opposite_vertex + 1) % 3],  # external neighbor
+        ]
+        neighs_t2 = [
+            nA[(opposite_vertex + 2) % 3],  # external neighbor
+            containing_idx,  # sibling
+            nA[opposite_vertex],  # same as original
+        ]
+
+        triangulation.triangle_neighbors[containing_idx] = (
+            reorder_neighbors_for_triangle(tri1_raw, tri1, neighs_t1)
+        )
+        triangulation.triangle_neighbors[idx_tri2] = reorder_neighbors_for_triangle(
+            tri2_raw, tri2, neighs_t2
+        )
+
+        # Update external neighbors that pointed to containing_idx
+        for neigh_idx in [nA[(opposite_vertex + 1) % 3], nA[(opposite_vertex + 2) % 3]]:
+            if neigh_idx >= 0:
+                for i, ref in enumerate(triangulation.triangle_neighbors[neigh_idx]):
+                    if ref == containing_idx:
+                        triangulation.triangle_neighbors[neigh_idx, i] = idx_tri2
+
+        triangulation.last_triangle_idx = idx_tri2
+        return triangulation
+
+    else:
+        # --- Internal case: split 2 tris into 4 ---
+        vB = triangulation.triangle_vertices[neighbor_idx]
+        nB = triangulation.triangle_neighbors[neighbor_idx]
+
+        # Opposite vertex in neighbor
+        oppB = [x for x in vB if x not in edge_vertices][0]
+
+        # New triangles
+        triA1_raw = np.array([point_idx, edge_vertices[0], apexA])
+        triA2_raw = np.array([point_idx, apexA, edge_vertices[1]])
+        triB1_raw = np.array([point_idx, edge_vertices[0], oppB])
+        triB2_raw = np.array([point_idx, oppB, edge_vertices[1]])
+
+        triA1 = ensure_ccw_triangle(triA1_raw, triangulation.all_points)
+        triA2 = ensure_ccw_triangle(triA2_raw, triangulation.all_points)
+        triB1 = ensure_ccw_triangle(triB1_raw, triangulation.all_points)
+        triB2 = ensure_ccw_triangle(triB2_raw, triangulation.all_points)
+
+        # Replace old tris
+        triangulation.triangle_vertices[containing_idx] = triA1
+        triangulation.triangle_vertices[neighbor_idx] = triB1
+        triangulation.triangle_vertices = np.vstack(
+            (triangulation.triangle_vertices, [triA2], [triB2])
+        )
+        idx_A2 = len(triangulation.triangle_vertices) - 2
+        idx_B2 = len(triangulation.triangle_vertices) - 1
+
+        triangulation.triangle_neighbors = np.vstack(
+            (triangulation.triangle_neighbors, np.full((2, 3), -1, int))
+        )
+
+        # Neighbor templates (before reordering)
+        neighs_A1 = [neighbor_idx, idx_A2, nA[(opposite_vertex + 1) % 3]]
+        neighs_A2 = [neighbor_idx, containing_idx, nA[(opposite_vertex + 2) % 3]]
+        neighs_B1 = [
+            containing_idx,
+            idx_B2,
+            nB[(edge_vertices.index(edge_vertices[0]) + 1) % 3],
+        ]
+        neighs_B2 = [
+            containing_idx,
+            neighbor_idx,
+            nB[(edge_vertices.index(edge_vertices[1]) + 1) % 3],
+        ]
+
+        triangulation.triangle_neighbors[containing_idx] = (
+            reorder_neighbors_for_triangle(triA1_raw, triA1, neighs_A1)
+        )
+        triangulation.triangle_neighbors[idx_A2] = reorder_neighbors_for_triangle(
+            triA2_raw, triA2, neighs_A2
+        )
+        triangulation.triangle_neighbors[neighbor_idx] = reorder_neighbors_for_triangle(
+            triB1_raw, triB1, neighs_B1
+        )
+        triangulation.triangle_neighbors[idx_B2] = reorder_neighbors_for_triangle(
+            triB2_raw, triB2, neighs_B2
+        )
+
+        # Update external neighbors that pointed to A or B
+        for neigh_idx in nA:
+            if neigh_idx >= 0:
+                for i, ref in enumerate(triangulation.triangle_neighbors[neigh_idx]):
+                    if ref == containing_idx:
+                        triangulation.triangle_neighbors[neigh_idx, i] = idx_A2
+        for neigh_idx in nB:
+            if neigh_idx >= 0:
+                for i, ref in enumerate(triangulation.triangle_neighbors[neigh_idx]):
+                    if ref == neighbor_idx:
+                        triangulation.triangle_neighbors[neigh_idx, i] = idx_B2
+
+        triangulation.last_triangle_idx = idx_B2
+        return triangulation
+
+
 def insert_point(
     point_idx: int,
     point: NDArray[np.floating],
@@ -197,9 +371,22 @@ def insert_point(
     :return: Updated triangle_vertices, triangle_neighbors, last_triangle_idx
     """
     # Find the triangle containing the point
-    containing_idx = find_containing_triangle(
+    containing_tri = find_containing_triangle(
         triangulation, point, triangulation.last_triangle_idx
     )
+
+    if containing_tri.position == PointInTriangle.vertex:
+        # Point coincides with an existing vertex -> nothing to do
+        triangulation.last_triangle_idx = containing_tri.idx
+        return triangulation
+
+    containing_idx = containing_tri.idx
+    if containing_tri.position == PointInTriangle.edge:
+        # Split the edge shared by 'containing_idx' and its neighbor opposite vertex 'key'
+        # return insert_point_on_edge(
+        #     point_idx, containing_tri.idx, containing_tri.opp_v, triangulation
+        # )
+        return triangulation
 
     # Get vertices of the containing triangle
     v1_idx, v2_idx, v3_idx = triangulation.triangle_vertices[containing_idx]
@@ -364,9 +551,7 @@ def remove_super_triangle_triangles(
 
 
 def triangulate(
-    points: NDArray[np.floating],
-    margin: float = 10.0,
-    debug: bool = False
+    points: NDArray[np.floating], margin: float = 10.0, debug: bool = False
 ):
     """
     Implement Delaunay triangulation using the incremental algorithm with efficient
@@ -413,72 +598,97 @@ def triangulate(
     return triangulation
 
 
-def remove_holes_old(
-    triangulation: Triangulation, outer: list[int], holes: list[list[int]]
-) -> None:
+def build_polygons_from_edges(edges: list[tuple[int, int]]) -> list[list[int]]:
     """
-    Get the final triangulation, compute the centroids for all the triangles. If a centroid is outside the domain,
-    remove the corresponding triangle.
-    TODO: caveats we can have 1) Centroid Inside, Triangle Outside, 2) Centroid Outside, Triangle Inside
-    for a more robust version, use this strategy for all vertices (if a point is on the boundary, then it's inside)
-    TODO: points in outer and holes should be sorted as those in triangulation do!
+    Build closed polygons from a list of undirected edges (v1, v2).
+    Returns a list of polygons, each as a list of vertex indices in order.
     """
-    tri_vertices = triangulation.triangle_vertices
-    to_delete = []
-    poly_outer = [triangulation.all_points[p] for p in outer]
-    poly_holes = []
-    for hole in holes:
-        poly_hole = [triangulation.all_points[p] for p in hole]
-        poly_holes.append(poly_hole)
+    # adjacency
+    adj: dict[int, list[int]] = {}
+    for v1, v2 in edges:
+        adj.setdefault(v1, []).append(v2)
+        adj.setdefault(v2, []).append(v1)
 
-    for idx, row in enumerate(tri_vertices):
-        tri_points = triangulation.all_points[row]
-        centroid = np.mean(tri_points, axis=0)
-        if not is_inside_domain(centroid, poly_outer, poly_holes):
-            to_delete.append(idx)
+    visited = set()
+    polygons = []
 
-    logger.info(f"Removing triangles {to_delete}")
-    new_tri_vertices = [
-        row for idx, row in enumerate(tri_vertices) if idx not in to_delete
-    ]
-    # TODO: update triangle neighbors?
-    triangulation.triangle_vertices = new_tri_vertices  # type: ignore[reportAttributeAccessIssue]
+    for start in adj:
+        if start in visited:
+            continue
+        polygon = [start]
+        current = start
+        prev = None
+        while True:
+            visited.add(current)
+            # pick the next vertex (not coming back)
+            neighbors = adj[current]
+            next_v = (
+                neighbors[0]
+                if len(neighbors) == 1 or neighbors[0] != prev
+                else neighbors[1]
+            )
+            if next_v == start:
+                break
+            polygon.append(next_v)
+            prev, current = current, next_v
+        polygons.append(polygon)
+
+    return polygons
+
+
+def polygon_area(coords: list[np.ndarray]) -> float:
+    """Signed area of polygon (positive for CCW)."""
+    x = [p[0] for p in coords]
+    y = [p[1] for p in coords]
+    return 0.5 * sum(
+        x[i] * y[i + 1] - x[i + 1] * y[i] for i in range(-1, len(coords) - 1)
+    )
 
 
 def remove_holes(
-    triangulation: Triangulation, outer: list[int], holes: list[list[int]]
+    triangulation: Triangulation, constrained_edges: list[tuple[int, int]]
 ) -> None:
     """
-    Remove triangles outside the polygon (outer boundary with optional holes).
-    Rebuilds triangle_neighbors to keep mesh topology consistent.
+    Remove triangles outside the domain defined by constrained edges.
+    The outer boundary is inferred as the polygon with largest area.
+    Other polygons are treated as holes.
     """
     tri_vertices = triangulation.triangle_vertices
     all_points = triangulation.all_points
-    to_delete = []
 
-    # Convert vertex indices to coordinates
-    poly_outer = [all_points[p] for p in outer]
-    poly_holes = [[all_points[p] for p in hole] for hole in holes]
+    # Build polygons
+    polygons = build_polygons_from_edges(constrained_edges)
+
+    # Classify into outer + holes by area
+    areas = [abs(polygon_area([all_points[v] for v in poly])) for poly in polygons]
+    outer_idx = int(np.argmax(areas))
+    outer = [all_points[v] for v in polygons[outer_idx]]
+    holes = [
+        [all_points[v] for v in poly]
+        for i, poly in enumerate(polygons)
+        if i != outer_idx
+    ]
 
     # Classify triangles by centroid
+    to_delete = []
     for idx, row in enumerate(tri_vertices):
         tri_points = all_points[row]
         centroid = np.mean(tri_points, axis=0)
-        if not is_inside_domain(centroid, poly_outer, poly_holes):
+        if not is_inside_domain(centroid, outer, holes):
             to_delete.append(idx)
 
-    logger.info(f"Removing triangles {to_delete}")
+    logger.info(f"Removing {len(to_delete)} triangles (outside or in holes)")
 
-    # Keep only triangles not marked for deletion
+    # Keep only valid triangles
     keep_mask = np.ones(len(tri_vertices), dtype=bool)
     keep_mask[to_delete] = False
     new_tri_vertices = tri_vertices[keep_mask]
 
-    # --- Rebuild neighbors ---
+    # Rebuild neighbors
     edge_to_triangle = {}
     for t_idx, tri in enumerate(new_tri_vertices):
         for i in range(3):
-            v1, v2 = tri[(i + 1) % 3], tri[(i + 2) % 3]  # edge opposite vertex i
+            v1, v2 = tri[(i + 1) % 3], tri[(i + 2) % 3]
             edge_to_triangle[(v1, v2)] = t_idx
 
     new_neighbors = np.full((len(new_tri_vertices), 3), -1, dtype=int)

@@ -1,14 +1,24 @@
+from enum import Enum, auto
+
 import numpy as np
 from numpy._typing import NDArray
 
 EPS = 1e-12
 
 
+class PointInTriangle(Enum):
+    vertex = auto()
+    edge = auto()
+    inside = auto()
+    outside = auto()
+
+
 def point_inside_triangle(
     triangle: NDArray[np.floating],
     point: NDArray[np.floating],
+    eps: float = 1e-6,
     debug: bool = False,
-) -> bool:
+) -> tuple[PointInTriangle, int | None]:
     """
     Check if a point lies inside a triangle using the determinant method with numpy.
     - triangle: List of three vertices [(x1, y1), (x2, y2), (x3, y3)].
@@ -17,44 +27,93 @@ def point_inside_triangle(
     Returns True if the point is inside the triangle, False otherwise.
     """
     a, b, c = np.array(triangle)
-    p = np.array(point)
 
-    # Compute vectors
-    ab = b - a
-    ap = p - a
+    det1 = orient2d(a, b, point)
+    det2 = orient2d(b, c, point)
+    det3 = orient2d(c, a, point)
 
-    bc = c - b
-    bp = p - b
+    # On vertex?
+    if np.allclose(point, a, atol=eps):
+        return PointInTriangle.vertex, None
+    if np.allclose(point, b, atol=eps):
+        return PointInTriangle.vertex, None
+    if np.allclose(point, c, atol=eps):
+        return PointInTriangle.vertex, None
 
-    ca = a - c
-    cp = p - c
+    # On which edge?
+    if is_point_on_segment(a, b, point, eps):
+        return PointInTriangle.edge, 2  # opposite vertex 2
+    if is_point_on_segment(b, c, point, eps):
+        return PointInTriangle.edge, 0  # opposite vertex 0
+    if is_point_on_segment(c, a, point, eps):
+        return PointInTriangle.edge, 1  # opposite vertex 1
 
-    det1 = ab[0] * ap[1] - ab[1] * ap[0]
-    det2 = bc[0] * bp[1] - bc[1] * bp[0]
-    det3 = ca[0] * cp[1] - ca[1] * cp[0]
-    determinants = np.array([det1, det2, det3])
-
-    # Check if all determinants have the same sign (inside the triangle)
-    inside = np.all(determinants > 0) or np.all(determinants < 0)
+    # Inside / outside via signs (boundary counted inside)
+    has_neg = (det1 < -eps) or (det2 < -eps) or (det3 < -eps)
+    has_pos = (det1 > eps) or (det2 > eps) or (det3 > eps)
 
     if debug:
         import matplotlib.pyplot as plt
 
-        triangle_with_closure = np.vstack([triangle, triangle[0]])  # Close the triangle
+        tri_closed = np.vstack([triangle, triangle[0]])
         plt.figure()
-        plt.plot(
-            triangle_with_closure[:, 0],
-            triangle_with_closure[:, 1],
-            "b-",
-            label="Triangle",
-        )
-        plt.scatter(*point, color="red", label="Point")
+        plt.plot(tri_closed[:, 0], tri_closed[:, 1], "b-")
+        plt.scatter(*point, color="red")
         plt.axis("equal")
-        plt.legend()
-        plt.title("Point Inside Triangle" if inside else "Point Outside Triangle")
         plt.show()
 
-    return bool(inside)
+    if not (has_neg and has_pos):
+        # it's zero
+        return PointInTriangle.inside, None
+    return PointInTriangle.outside, None
+
+
+def is_point_on_segment(
+    a: NDArray[np.floating],
+    b: NDArray[np.floating],
+    p: NDArray[np.floating],
+    eps: float = 1e-12,
+) -> bool:
+    # colinear?
+    if abs(orient2d(a, b, p)) > eps:
+        return False
+    return (
+        min(a[0], b[0]) - eps <= p[0] <= max(a[0], b[0]) + eps
+        and min(a[1], b[1]) - eps <= p[1] <= max(a[1], b[1]) + eps
+    )
+
+
+def classify_point_in_triangle(
+    tri: NDArray[np.floating], p: NDArray[np.floating], eps: float = 1e-6
+) -> tuple[PointInTriangle, int | None]:
+    # tri is (3,2) in the same order as triangulation.triangle_vertices for that triangle
+    a, b, c = tri
+    d1 = orient2d(a, b, p)
+    d2 = orient2d(b, c, p)
+    d3 = orient2d(c, a, p)
+
+    # On vertex?
+    if np.allclose(p, a, atol=eps):
+        return PointInTriangle.vertex, None
+    if np.allclose(p, b, atol=eps):
+        return PointInTriangle.vertex, None
+    if np.allclose(p, c, atol=eps):
+        return PointInTriangle.vertex, None
+
+    # On which edge?
+    if is_point_on_segment(a, b, p, eps):
+        return PointInTriangle.edge, 2  # opposite vertex 2
+    if is_point_on_segment(b, c, p, eps):
+        return PointInTriangle.edge, 0  # opposite vertex 0
+    if is_point_on_segment(c, a, p, eps):
+        return PointInTriangle.edge, 1  # opposite vertex 1
+
+    # Inside / outside via signs (boundary counted inside)
+    has_neg = (d1 < -eps) or (d2 < -eps) or (d3 < -eps)
+    has_pos = (d1 > eps) or (d2 > eps) or (d3 > eps)
+    if not (has_neg and has_pos):
+        return PointInTriangle.inside, None
+    return PointInTriangle.outside, None
 
 
 def orient2d(pa: NDArray, pb: NDArray, pc: NDArray) -> float:
