@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from collections import deque
 
 import numpy as np
 from loguru import logger
@@ -601,14 +602,69 @@ def triangulate(
 def build_polygons_from_edges(edges: list[tuple[int, int]]) -> list[list[int]]:
     """
     Build closed polygons from a list of undirected edges (v1, v2).
-    Returns a list of polygons, each as a list of vertex indices in order.
+    Handles the special case where exactly two vertices have degree 3:
+    removes the path between them. Raises RuntimeError if more than two
+    degree-3 vertices are found.
     """
-    # adjacency
+    # normalize input
+    edges = [tuple(e) for e in edges]
+
+    # build adjacency
     adj: dict[int, list[int]] = {}
     for v1, v2 in edges:
         adj.setdefault(v1, []).append(v2)
         adj.setdefault(v2, []).append(v1)
 
+    # compute degrees
+    degree = {v: len(nbrs) for v, nbrs in adj.items()}
+    deg3_vertices = [v for v, d in degree.items() if d == 3]
+
+    if len(deg3_vertices) > 2:
+        raise RuntimeError("Graph has more than two degree-3 vertices")
+
+    # if exactly two degree-3 vertices: remove path between them
+    if len(deg3_vertices) == 2:
+        start, goal = deg3_vertices
+
+        # BFS to find shortest path
+        parent = {start: None}
+        queue = deque([start])
+        found = False
+        while queue and not found:
+            cur = queue.popleft()
+            for nbr in adj[cur]:
+                if nbr not in parent:
+                    parent[nbr] = cur
+                    if nbr == goal:
+                        found = True
+                        break
+                    queue.append(nbr)
+
+        if not found:
+            raise RuntimeError("No path found between degree-3 vertices")
+
+        # reconstruct path
+        path = []
+        v = goal
+        while v is not None:
+            path.append(v)
+            v = parent[v]
+        path = path[::-1]
+
+        # remove edges along the path
+        path_edges = {
+            (path[i], path[i + 1]) if path[i] < path[i + 1] else (path[i + 1], path[i])
+            for i in range(len(path) - 1)
+        }
+        edges = [tuple(sorted(e)) for e in edges if tuple(sorted(e)) not in path_edges]
+
+        # rebuild adjacency after removing
+        adj = {}
+        for v1, v2 in edges:
+            adj.setdefault(v1, []).append(v2)
+            adj.setdefault(v2, []).append(v1)
+
+    # now only polygons remain → extract them
     visited = set()
     polygons = []
 
@@ -620,13 +676,12 @@ def build_polygons_from_edges(edges: list[tuple[int, int]]) -> list[list[int]]:
         prev = None
         while True:
             visited.add(current)
-            # pick the next vertex (not coming back)
             neighbors = adj[current]
-            next_v = (
-                neighbors[0]
-                if len(neighbors) == 1 or neighbors[0] != prev
-                else neighbors[1]
-            )
+            if len(neighbors) != 2:
+                raise RuntimeError(
+                    f"Vertex {current} does not have degree 2 after cleanup"
+                )
+            next_v = neighbors[0] if neighbors[0] != prev else neighbors[1]
             if next_v == start:
                 break
             polygon.append(next_v)
