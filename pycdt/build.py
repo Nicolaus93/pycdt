@@ -677,7 +677,7 @@ def remove_holes(
         if not is_inside_domain(centroid, outer, holes):
             to_delete.append(idx)
 
-    logger.info(f"Removing {len(to_delete)} triangles (outside or in holes)")
+    logger.debug(f"Removing {len(to_delete)} triangles (outside or in holes)")
 
     # Keep only valid triangles
     keep_mask = np.ones(len(tri_vertices), dtype=bool)
