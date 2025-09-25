@@ -19,6 +19,7 @@ class Triangulation:
         title: str = "Triangulation",
         point_labels: bool = False,
         exclude_super_t: bool = False,
+        exclude_unused_points: bool = True,
     ) -> None:
         """
         Plot the triangulation using matplotlib.
@@ -35,13 +36,26 @@ class Triangulation:
 
         # Draw triangles and label triangle indices and vertices
         if exclude_super_t:
-            triangle_vertices = self.triangle_vertices[
-                3:
-            ]  # exclude super-triangle vertices  TODO: hard-coded 3 is not safe
+            # Indices of super triangle vertices (last 3 points)
+            super_vertices = set(range(len(self.all_points) - 3, len(self.all_points)))
+
+            # Keep only triangles that don’t touch super vertices
+            mask = ~np.any(
+                np.isin(self.triangle_vertices, list(super_vertices)), axis=1
+            )
+            triangle_vertices = self.triangle_vertices[mask]
+
+            # Drop the last 3 points (super triangle vertices)
             all_points = self.all_points[:-3]
         else:
             triangle_vertices = self.triangle_vertices
             all_points = self.all_points
+
+        # restrict points to those used in triangles
+        if exclude_unused_points:
+            used_vertices = np.unique(triangle_vertices)
+        else:
+            used_vertices = np.arange(len(all_points))
 
         for tri_idx, tri in enumerate(triangle_vertices):
             pts = all_points[tri]
@@ -60,27 +74,29 @@ class Triangulation:
                 color="green",
             )
 
-            # Vertex indices at triangle corners with slight offset
-            for vert_idx, (x, y) in zip(tri, pts):
-                ax.text(
-                    x + offset,
-                    y + offset,
-                    str(vert_idx),
-                    fontsize=7,
-                    ha="left",
-                    va="bottom",
-                    color="purple",
-                )
+            if point_labels:
+                # Vertex indices at triangle corners with slight offset
+                for vert_idx, (x, y) in zip(tri, pts):
+                    if vert_idx in used_vertices:
+                        ax.text(
+                            x + offset,
+                            y + offset,
+                            str(vert_idx),
+                            fontsize=7,
+                            ha="left",
+                            va="bottom",
+                            color="purple",
+                        )
+                        # ax.plot(x, y, "ro", markersize=3)
 
         # Draw points
         ax.plot(all_points[:, 0], all_points[:, 1], "ro", markersize=3)
-
-        # Optional: Label all points with their indices in blue
-        if point_labels:
-            for idx, (x, y) in enumerate(all_points):
-                ax.text(
-                    x, y, str(idx), fontsize=8, ha="right", va="bottom", color="blue"
-                )
+        # # Optional: Label all points with their indices in blue
+        # if point_labels:
+        #     for idx, (x, y) in enumerate(all_points):
+        #         ax.text(
+        #             x, y, str(idx), fontsize=8, ha="right", va="bottom", color="blue"
+        #         )
 
         ax.set_aspect("equal")
         ax.set_title(title)

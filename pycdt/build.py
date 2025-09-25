@@ -51,8 +51,6 @@ def find_containing_triangle(
     # Keep track of visited triangles to avoid cycles
     visited = {triangle_idx}
     while True:
-        logger.debug(f"visiting {triangle_idx}")
-
         # Get the current triangle vertices
         v_indices = triangulation.triangle_vertices[triangle_idx]
         triangle = triangulation.all_points[v_indices]
@@ -64,6 +62,7 @@ def find_containing_triangle(
             PointInTriangle.edge,
             PointInTriangle.vertex,
         ):
+            logger.debug(f"Containing triangle: {triangle_idx}")
             return ContainingTriangle(
                 idx=triangle_idx,
                 position=point_position,
@@ -372,18 +371,25 @@ def insert_point(
     :return: Updated triangle_vertices, triangle_neighbors, last_triangle_idx
     """
     # Find the triangle containing the point
+    logger.debug(f"Searching containing triangle for point {point_idx}")
     containing_tri = find_containing_triangle(
         triangulation, point, triangulation.last_triangle_idx
     )
 
     if containing_tri.position == PointInTriangle.vertex:
         # Point coincides with an existing vertex -> nothing to do
+        logger.debug(
+            f"Point {point_idx} coincides with an existing vertex! Not adding it again"
+        )
         triangulation.last_triangle_idx = containing_tri.idx
         return triangulation
 
     containing_idx = containing_tri.idx
     if containing_tri.position == PointInTriangle.edge:
         # Split the edge shared by 'containing_idx' and its neighbor opposite vertex 'key'
+        logger.warning(
+            f"Point {point_idx} belongs to and edge! Edge case not implemented"
+        )
         # return insert_point_on_edge(
         #     point_idx, containing_tri.idx, containing_tri.opp_v, triangulation
         # )
@@ -522,7 +528,7 @@ def insert_point(
         lawson_swapping(point_idx, stack, triangulation)
 
     if debug:
-        triangulation.plot()
+        triangulation.plot(exclude_super_t=True, show=True)
 
     # Update last_triangle_idx to one of the new triangles
     triangulation.last_triangle_idx = triangle_count - 1

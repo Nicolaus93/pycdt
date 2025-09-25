@@ -86,7 +86,7 @@ if __name__ == "__main__":
             [-29.545, 5.206],
         ]
     )
-    yy = triangulate(arr, margin=2.0)
+    yy = triangulate(arr, margin=2.0, debug=True)
     yy.plot(show=True)
 
     constrained_edges = np.array(
