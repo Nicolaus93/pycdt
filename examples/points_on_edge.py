@@ -83,6 +83,7 @@ if __name__ == "__main__":
         show=True,
         point_labels=True,
         exclude_unused_points=False,
+        # fontsize=1,
     )
     edges = np.array(
         [

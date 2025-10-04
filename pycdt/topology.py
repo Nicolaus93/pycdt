@@ -75,7 +75,7 @@ def lawson_swapping(
 
     logger.debug("Lawson swapping phase")
     while stack:
-        logger.debug(f"Stack -> {stack}")
+        logger.trace(f"Stack -> {stack}")
         t3_idx, t4_idx = stack.pop()
 
         # Skip if either triangle is invalid
@@ -92,7 +92,7 @@ def lawson_swapping(
                 incircle_test_debug(t3_points, p)
             continue
 
-        logger.debug(
+        logger.trace(
             f"Point {point_idx} from triangle {t4_idx} lies in circumcircle of triangle {t3_idx}; flipping shared edge"
         )
 

@@ -20,6 +20,7 @@ class Triangulation:
         point_labels: bool = False,
         exclude_super_t: bool = False,
         exclude_unused_points: bool = True,
+        fontsize: int = 7,
     ) -> None:
         """
         Plot the triangulation using matplotlib.
@@ -68,7 +69,7 @@ class Triangulation:
                 centroid[0],
                 centroid[1],
                 str(tri_idx),
-                fontsize=8,
+                fontsize=fontsize,
                 ha="center",
                 va="center",
                 color="green",
@@ -82,7 +83,7 @@ class Triangulation:
                             x + offset,
                             y + offset,
                             str(vert_idx),
-                            fontsize=7,
+                            fontsize=fontsize,
                             ha="left",
                             va="bottom",
                             color="purple",
@@ -90,7 +91,7 @@ class Triangulation:
                         # ax.plot(x, y, "ro", markersize=3)
 
         # Draw points
-        ax.plot(all_points[:, 0], all_points[:, 1], "ro", markersize=3)
+        ax.plot(all_points[:, 0], all_points[:, 1], "ro", markersize=fontsize)
         # # Optional: Label all points with their indices in blue
         # if point_labels:
         #     for idx, (x, y) in enumerate(all_points):
@@ -110,6 +111,86 @@ class Triangulation:
         img = np.asarray(buf)[:, :, :3]  # Convert to RGB by discarding alpha
         plt.close(fig)
         self.debug_plots.append(img)
+
+    def debug_plot_triangles(self, tri_indices, title=""):
+        """Plot only selected triangles with their vertices."""
+        import matplotlib.pyplot as plt
+
+        pts = self.all_points
+
+        fig, ax = plt.subplots()
+        for tidx in tri_indices:
+            verts = self.triangle_vertices[tidx]
+            tri = pts[verts]
+            # Close the polygon loop
+            poly = np.vstack([tri, tri[0]])
+            ax.plot(poly[:, 0], poly[:, 1], "k-")
+            ax.fill(poly[:, 0], poly[:, 1], alpha=0.2)
+            for v in verts:
+                ax.scatter(pts[v][0], pts[v][1], c="r")
+                ax.text(pts[v][0], pts[v][1], str(v), fontsize=8)
+
+            # # Label the triangle itself at its centroid
+            # centroid = tri.mean(axis=0)
+            # ax.text(*centroid, f"T{tidx}", fontsize=10, color="b", weight="bold")
+
+        ax.set_title(title)
+        ax.axis("equal")
+        plt.show()
+
+    def debug_plot_edge_region(self, edge_point_1, edge_point_2, title=""):
+        """Plot all triangles that contain the given edge (edge_point_1, edge_point_2)."""
+        import matplotlib.pyplot as plt
+
+        pts = self.all_points
+
+        mask = np.any(
+            (self.triangle_vertices == edge_point_1)
+            | (self.triangle_vertices == edge_point_2),
+            axis=1,
+        )
+        tri_indices = np.where(mask)[0]
+
+        offset = 0.01
+        fig, ax = plt.subplots()
+        for tidx in tri_indices:
+            verts = self.triangle_vertices[tidx]
+            tri = pts[verts]
+            # Close the polygon loop
+            poly = np.vstack([tri, tri[0]])
+            ax.plot(poly[:, 0], poly[:, 1], "k-")
+            ax.fill(poly[:, 0], poly[:, 1], alpha=0.2)
+
+            # Plot vertices
+            for v in verts:
+                if v in (edge_point_1, edge_point_2):
+                    continue
+                ax.scatter(*pts[v], c="red", s=2, zorder=3)
+                ax.text(*(pts[v] + 8 * offset), str(v), fontsize=1, color="red")  # type: ignore[reportCallIssue]
+
+            centroid = tri.mean(axis=0)
+            ax.text(*centroid, f"{tidx}", fontsize=1, color="green", weight="bold")  # type: ignore[reportCallIssue]
+
+        ax.scatter(*pts[edge_point_1], c="blue", s=2, zorder=3)
+        ax.text(
+            *(pts[edge_point_1] + 8 * offset),
+            f"{edge_point_1}",  # type: ignore[reportCallIssue]
+            fontsize=1,
+            color="b",
+            weight="bold",
+        )
+        ax.scatter(*pts[edge_point_2], c="blue", s=2, zorder=3)
+        ax.text(
+            *(pts[edge_point_2] + 8 * offset),
+            f"{edge_point_2}",  # type: ignore[reportCallIssue]
+            fontsize=1,
+            color="b",
+            weight="bold",
+        )
+
+        ax.set_title(title)
+        ax.axis("equal")
+        plt.show()
 
     def export_animation_matplotlib(self, filepath: str | Path, fps: int = 2) -> None:
         """
