@@ -44,5 +44,5 @@ if __name__ == "__main__":
         ]
     )
 
-    yy = triangulate(arr, margin=100)
+    yy = triangulate(arr, margin=100, debug=True)
     yy.plot(show=True)

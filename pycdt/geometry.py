@@ -16,7 +16,7 @@ class PointInTriangle(Enum):
 def point_inside_triangle(
     triangle: NDArray[np.floating],
     point: NDArray[np.floating],
-    eps: float = 1e-6,
+    eps: float = 1e-3,
     debug: bool = False,
 ) -> tuple[PointInTriangle, int | None]:
     """
