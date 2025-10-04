@@ -7,13 +7,13 @@ requires-python = ">=3.12"
 dependencies = [
     "loguru>=0.7.3",
     "matplotlib>=3.10.5",
-    "mpld3>=0.5.11",
     "numpy>=2.3.2",
     "shewchuk>=6.10.0",
 ]
 
 [tool.uv]
 dev-dependencies = [
+    "mpld3>=0.5.11",
     "pyright>=1.1.405",
     "pytest>=8.4.1",
 ]

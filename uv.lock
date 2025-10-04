@@ -510,13 +510,13 @@ source = { virtual = "." }
 dependencies = [
     { name = "loguru" },
     { name = "matplotlib" },
-    { name = "mpld3" },
     { name = "numpy" },
     { name = "shewchuk" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "mpld3" },
     { name = "pyright" },
     { name = "pytest" },
 ]
@@ -525,13 +525,13 @@ dev = [
 requires-dist = [
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "matplotlib", specifier = ">=3.10.5" },
-    { name = "mpld3", specifier = ">=0.5.11" },
     { name = "numpy", specifier = ">=2.3.2" },
     { name = "shewchuk", specifier = ">=6.10.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "mpld3", specifier = ">=0.5.11" },
     { name = "pyright", specifier = ">=1.1.405" },
     { name = "pytest", specifier = ">=8.4.1" },
 ]
