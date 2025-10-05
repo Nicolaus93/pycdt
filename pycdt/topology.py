@@ -1,6 +1,6 @@
 import numpy as np
 from loguru import logger
-from numpy._typing import NDArray
+from numpy.typing import NDArray
 from shewchuk import incircle_test
 
 from pycdt.delaunay import Triangulation, incircle_test_debug
@@ -23,6 +23,9 @@ def find_neighbor_edge_index(
     )
 
 
+class SharedEdgeError(Exception): ...
+
+
 def find_shared_edge(
     tri1_vertices: NDArray, tri2_vertices: NDArray
 ) -> tuple[int, int, int, int]:
@@ -35,7 +38,7 @@ def find_shared_edge(
     """
     shared = list(set(tri1_vertices) & set(tri2_vertices))
     if len(shared) != 2:
-        raise RuntimeError(
+        raise SharedEdgeError(
             f"Triangles must share exactly one edge. Shared vertices: {shared}"
         )
 

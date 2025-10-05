@@ -1,13 +1,17 @@
+from copy import deepcopy
 from dataclasses import dataclass
-from collections import deque
 from functools import partial
 
 import numpy as np
 from loguru import logger
-from numpy._typing import NDArray
+from numpy.typing import NDArray
 
 from pycdt.delaunay import Triangulation
-from pycdt.topology import lawson_swapping, reorder_neighbors_for_triangle
+from pycdt.topology import (
+    lawson_swapping,
+    reorder_neighbors_for_triangle,
+    SharedEdgeError,
+)
 from pycdt.geometry import (
     point_inside_triangle,
     ensure_ccw_triangle,
@@ -95,10 +99,19 @@ def find_containing_triangle(
                     candidates.append(adjacent_idx)
 
         if not candidates:
-            triangulation.plot(show=True)
-            raise ValueError(
-                f"Couldn't find a triangle containing {point}! Visited: {visited}, triangulation has {len(triangulation.triangle_vertices)}"
+            if len(visited) == len(triangulation.triangle_vertices):
+                triangulation.plot(show=True, fontsize=1)
+                raise ValueError(
+                    f"Couldn't find a triangle containing {point}! Visited: {visited}, triangulation has {len(triangulation.triangle_vertices)}"
+                )
+            logger.warning(
+                "No containing triangle found! Considering all triangles now.."
             )
+            candidates = [
+                i
+                for i in range(len(triangulation.triangle_vertices))
+                if i not in visited
+            ]
 
         triangle_idx = candidates.pop()
         while triangle_idx in visited:
@@ -583,6 +596,7 @@ def insert_point(
         return triangulation
 
     containing_idx = containing_tri.idx
+    tri_before = deepcopy(triangulation)
     if containing_tri.position == PointInTriangle.edge:
         # Split the edge shared by 'containing_idx' and its neighbor opposite vertex 'key'
         if containing_tri.opp_v is None:
@@ -599,7 +613,11 @@ def insert_point(
 
     # Restore Delaunay triangulation (edge flipping)
     if stack:
-        lawson_swapping(point_idx, stack, triangulation)
+        try:
+            lawson_swapping(point_idx, stack, triangulation)
+        except SharedEdgeError:
+            logger.warning(f"Skipped point {point_idx} because of shared edge error!")
+            triangulation = tri_before
 
     if debug:
         triangulation.plot(exclude_super_t=True, show=True)
@@ -695,54 +713,54 @@ def build_polygons_from_edges(edges: list[tuple[int, int]]) -> list[list[int]]:
         adj.setdefault(v1, []).append(v2)
         adj.setdefault(v2, []).append(v1)
 
-    # compute degrees
-    degree = {v: len(nbrs) for v, nbrs in adj.items()}
-    deg3_vertices = [v for v, d in degree.items() if d == 3]
-
-    if len(deg3_vertices) > 2:
-        raise RuntimeError("Graph has more than two degree-3 vertices")
-
-    # if exactly two degree-3 vertices: remove path between them
-    if len(deg3_vertices) == 2:
-        start, goal = deg3_vertices
-
-        # BFS to find shortest path
-        parent: dict[int, int | None] = {start: None}
-        queue = deque([start])
-        found = False
-        while queue and not found:
-            cur = queue.popleft()
-            for nbr in adj[cur]:
-                if nbr not in parent:
-                    parent[nbr] = cur
-                    if nbr == goal:
-                        found = True
-                        break
-                    queue.append(nbr)
-
-        if not found:
-            raise RuntimeError("No path found between degree-3 vertices")
-
-        # reconstruct path
-        path = []
-        v = goal
-        while v is not None:
-            path.append(v)
-            v = parent[v]
-        path = path[::-1]
-
-        # remove edges along the path
-        path_edges = {
-            (path[i], path[i + 1]) if path[i] < path[i + 1] else (path[i + 1], path[i])
-            for i in range(len(path) - 1)
-        }
-        edges = [tuple(sorted(e)) for e in edges if tuple(sorted(e)) not in path_edges]  # type: ignore[reportAssignmentType]
-
-        # rebuild adjacency after removing
-        adj = {}
-        for v1, v2 in edges:
-            adj.setdefault(v1, []).append(v2)
-            adj.setdefault(v2, []).append(v1)
+    # # compute degrees
+    # degree = {v: len(nbrs) for v, nbrs in adj.items()}
+    # deg3_vertices = [v for v, d in degree.items() if d == 3]
+    #
+    # if len(deg3_vertices) > 2:
+    #     raise RuntimeError("Graph has more than two degree-3 vertices")
+    #
+    # # if exactly two degree-3 vertices: remove path between them
+    # if len(deg3_vertices) == 2:
+    #     start, goal = deg3_vertices
+    #
+    #     # BFS to find shortest path
+    #     parent: dict[int, int | None] = {start: None}
+    #     queue = deque([start])
+    #     found = False
+    #     while queue and not found:
+    #         cur = queue.popleft()
+    #         for nbr in adj[cur]:
+    #             if nbr not in parent:
+    #                 parent[nbr] = cur
+    #                 if nbr == goal:
+    #                     found = True
+    #                     break
+    #                 queue.append(nbr)
+    #
+    #     if not found:
+    #         raise RuntimeError("No path found between degree-3 vertices")
+    #
+    #     # reconstruct path
+    #     path = []
+    #     v = goal
+    #     while v is not None:
+    #         path.append(v)
+    #         v = parent[v]
+    #     path = path[::-1]
+    #
+    #     # remove edges along the path
+    #     path_edges = {
+    #         (path[i], path[i + 1]) if path[i] < path[i + 1] else (path[i + 1], path[i])
+    #         for i in range(len(path) - 1)
+    #     }
+    #     edges = [tuple(sorted(e)) for e in edges if tuple(sorted(e)) not in path_edges]  # type: ignore[reportAssignmentType]
+    #
+    #     # rebuild adjacency after removing
+    #     adj = {}
+    #     for v1, v2 in edges:
+    #         adj.setdefault(v1, []).append(v2)
+    #         adj.setdefault(v2, []).append(v1)
 
     # now only polygons remain → extract them
     visited = set()
@@ -781,7 +799,9 @@ def polygon_area(coords: list[np.ndarray]) -> float:
 
 
 def remove_holes(
-    triangulation: Triangulation, constrained_edges: list[tuple[int, int]]
+    triangulation: Triangulation,
+    constrained_edges: list[tuple[int, int]],
+    debug: bool = False,
 ) -> None:
     """
     Remove triangles outside the domain defined by constrained edges.
@@ -798,6 +818,15 @@ def remove_holes(
     areas = [abs(polygon_area([all_points[v] for v in poly])) for poly in polygons]
     outer_idx = int(np.argmax(areas))
     outer = [all_points[v] for v in polygons[outer_idx]]
+
+    if debug:
+        import matplotlib.pyplot as plt
+
+        arr = np.array(outer)
+        fig, ax = plt.subplots()
+        ax.scatter(arr[:, 0], arr[:, 1], c="blue", s=2)
+        plt.show()
+
     holes = [
         [all_points[v] for v in poly]
         for i, poly in enumerate(polygons)
