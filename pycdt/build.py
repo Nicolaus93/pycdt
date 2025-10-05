@@ -700,9 +700,7 @@ def triangulate(
 def build_polygons_from_edges(edges: list[tuple[int, int]]) -> list[list[int]]:
     """
     Build closed polygons from a list of undirected edges (v1, v2).
-    Handles the special case where exactly two vertices have degree 3:
-    removes the path between them. Raises RuntimeError if more than two
-    degree-3 vertices are found.
+    Raises RuntimeError if more than two degree-3 vertices are found.
     """
     # normalize input
     edges = [tuple((e[0], e[1])) for e in edges]  # type: ignore[reportAssignmentType]
@@ -712,55 +710,6 @@ def build_polygons_from_edges(edges: list[tuple[int, int]]) -> list[list[int]]:
     for v1, v2 in edges:
         adj.setdefault(v1, []).append(v2)
         adj.setdefault(v2, []).append(v1)
-
-    # # compute degrees
-    # degree = {v: len(nbrs) for v, nbrs in adj.items()}
-    # deg3_vertices = [v for v, d in degree.items() if d == 3]
-    #
-    # if len(deg3_vertices) > 2:
-    #     raise RuntimeError("Graph has more than two degree-3 vertices")
-    #
-    # # if exactly two degree-3 vertices: remove path between them
-    # if len(deg3_vertices) == 2:
-    #     start, goal = deg3_vertices
-    #
-    #     # BFS to find shortest path
-    #     parent: dict[int, int | None] = {start: None}
-    #     queue = deque([start])
-    #     found = False
-    #     while queue and not found:
-    #         cur = queue.popleft()
-    #         for nbr in adj[cur]:
-    #             if nbr not in parent:
-    #                 parent[nbr] = cur
-    #                 if nbr == goal:
-    #                     found = True
-    #                     break
-    #                 queue.append(nbr)
-    #
-    #     if not found:
-    #         raise RuntimeError("No path found between degree-3 vertices")
-    #
-    #     # reconstruct path
-    #     path = []
-    #     v = goal
-    #     while v is not None:
-    #         path.append(v)
-    #         v = parent[v]
-    #     path = path[::-1]
-    #
-    #     # remove edges along the path
-    #     path_edges = {
-    #         (path[i], path[i + 1]) if path[i] < path[i + 1] else (path[i + 1], path[i])
-    #         for i in range(len(path) - 1)
-    #     }
-    #     edges = [tuple(sorted(e)) for e in edges if tuple(sorted(e)) not in path_edges]  # type: ignore[reportAssignmentType]
-    #
-    #     # rebuild adjacency after removing
-    #     adj = {}
-    #     for v1, v2 in edges:
-    #         adj.setdefault(v1, []).append(v2)
-    #         adj.setdefault(v2, []).append(v1)
 
     # now only polygons remain → extract them
     visited = set()
@@ -810,6 +759,21 @@ def remove_holes(
     """
     tri_vertices = triangulation.triangle_vertices
     all_points = triangulation.all_points
+
+    if debug:
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots()
+        for edge in constrained_edges:
+            p1 = all_points[edge[0]]
+            p2 = all_points[edge[1]]
+            ax.plot([p1[0], p2[0]], [p1[1], p2[1]], c="gray", lw=0.5)
+        arr = np.array(all_points)
+        ax.scatter(arr[:, 0], arr[:, 1], c="blue", s=2)
+        offset = 4
+        for idx, p in enumerate(all_points):
+            ax.text(p[0] + offset, p[1] + offset, str(idx), fontsize=2, color="blue")
+        plt.show()
 
     # Build polygons
     polygons = build_polygons_from_edges(constrained_edges)
