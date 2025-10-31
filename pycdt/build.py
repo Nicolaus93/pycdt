@@ -6,6 +6,7 @@ import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+from pycdt.aabb import AABBTree
 from pycdt.delaunay import Triangulation
 from pycdt.topology import (
     lawson_swapping,
@@ -99,19 +100,33 @@ def find_containing_triangle(
                     candidates.append(adjacent_idx)
 
         if not candidates:
-            if len(visited) == len(triangulation.triangle_vertices):
-                triangulation.plot(show=True, fontsize=1)
-                raise ValueError(
-                    f"Couldn't find a triangle containing {point}! Visited: {visited}, triangulation has {len(triangulation.triangle_vertices)}"
-                )
-            logger.warning(
-                "No containing triangle found! Considering all triangles now.."
+            logger.debug(
+                f"Local walk failed after {steps} steps. Building AABB tree for fallback search."
             )
-            candidates = [
-                i
+            tree = AABBTree.from_triangulation(triangulation)
+            triangles = {
+                i: triangulation.all_points[triangulation.triangle_vertices[i]]
                 for i in range(len(triangulation.triangle_vertices))
-                if i not in visited
-            ]
+            }
+            found_idx = tree.find(point, triangles, point_inside_triangle)
+            if found_idx is not None:
+                v_indices = triangulation.triangle_vertices[found_idx]
+                point_position, opp_v = point_inside_triangle(
+                    triangulation.all_points[v_indices], point
+                )
+                return ContainingTriangle(
+                    idx=found_idx,
+                    position=point_position,
+                    opp_v=triangulation.triangle_vertices[found_idx][opp_v]
+                    if opp_v is not None
+                    else None,
+                )
+
+            # raise error otherwise
+            triangulation.plot(show=True, fontsize=1)
+            raise ValueError(
+                f"Couldn't find a triangle containing {point}! Visited: {visited}, triangulation has {len(triangulation.triangle_vertices)}"
+            )
 
         triangle_idx = candidates.pop()
         while triangle_idx in visited:
