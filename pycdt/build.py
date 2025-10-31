@@ -5,6 +5,7 @@ from functools import partial
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
+from shewchuk import orientation
 
 from pycdt.aabb import AABBTree
 from pycdt.delaunay import Triangulation
@@ -78,20 +79,19 @@ def find_containing_triangle(
                 opp_v=triangulation.triangle_vertices[triangle_idx][opp_v],
             )
 
-        # If not inside, find which edge to cross using the adjacent triangles information
+        # If not inside or on edge/vertex, find which edge to cross using the adjacent triangles information
         # Get edge indices in the triangle. NOTE!!! => it should be consistent with triangle_neighbors
         edges = [(1, 2), (2, 0), (0, 1)]
         candidates = []
         for i, (e1, e2) in enumerate(edges):
-            # Vector from edge to point
-            edge_vector = triangle[e2] - triangle[e1]
-            point_vector = point - triangle[e1]
+            x1, y1 = triangle[e1]
+            x2, y2 = triangle[e2]
+            px, py = point
 
-            # If cross product is negative, the point is on the "outside" of this edge
-            cross_prod = (
-                edge_vector[0] * point_vector[1] - edge_vector[1] * point_vector[0]
-            )
-            if cross_prod < 0:
+            # If orientation is negative, the point lies to the right of the edge
+            # → "outside" of this triangle
+            orient = orientation(x1, y1, x2, y2, px, py)
+            if orient < 0:
                 # Get the adjacent triangle for this edge
                 adjacent_idx = triangulation.triangle_neighbors[triangle_idx, i]
 
