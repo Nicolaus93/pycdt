@@ -193,7 +193,9 @@ def ensure_ccw_triangle(vertices: NDArray, points: NDArray) -> NDArray:
     return vertices
 
 
-def is_point_inside(x: float, y: float, poly: list[tuple[float, float]]) -> bool:
+def is_point_inside_polygon(
+    x: float, y: float, poly: list[tuple[float, float]]
+) -> bool:
     """
     From https://en.wikipedia.org/wiki/Even%E2%80%93odd_rule
     Determine if the point is on the path, corner, or boundary of the polygon
@@ -229,17 +231,3 @@ def is_point_inside(x: float, y: float, poly: list[tuple[float, float]]) -> bool
             if (cross < 0) != (y1 < y0):
                 inside = not inside
     return inside
-
-
-def is_inside_domain(
-    point: tuple[float, float],
-    poly_outer: list[tuple[float, float]],
-    holes: list[list[tuple[float, float]]],
-) -> bool:
-    x, y = point
-    if not is_point_inside(x, y, poly_outer):
-        return False
-    for hole in holes:
-        if is_point_inside(x, y, hole):
-            return False
-    return True

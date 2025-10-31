@@ -17,7 +17,7 @@ from pycdt.topology import (
 from pycdt.geometry import (
     point_inside_triangle,
     ensure_ccw_triangle,
-    is_inside_domain,
+    is_point_inside_polygon,
     PointInTriangle,
 )
 
@@ -798,6 +798,13 @@ def remove_holes(
     outer_idx = int(np.argmax(areas))
     outer = [all_points[v] for v in polygons[outer_idx]]
 
+    # Compute bounding box for outer polygon
+    outer_array = np.array(outer)
+    outer_xmin = outer_array[:, 0].min()
+    outer_ymin = outer_array[:, 1].min()
+    outer_xmax = outer_array[:, 0].max()
+    outer_ymax = outer_array[:, 1].max()
+
     if debug:
         import matplotlib.pyplot as plt
 
@@ -812,12 +819,46 @@ def remove_holes(
         if i != outer_idx
     ]
 
+    # Compute bounding boxes for each hole
+    hole_bboxes = []
+    for hole in holes:
+        hole_array = np.array(hole)
+        xmin = hole_array[:, 0].min()
+        ymin = hole_array[:, 1].min()
+        xmax = hole_array[:, 0].max()
+        ymax = hole_array[:, 1].max()
+        hole_bboxes.append((xmin, ymin, xmax, ymax))
+
     # Classify triangles by centroid
     to_delete = []
     for idx, row in enumerate(tri_vertices):
         tri_points = all_points[row]
         centroid = np.mean(tri_points, axis=0)
-        if not is_inside_domain(centroid, outer, holes):
+
+        # Check if inside outer boundary (with bbox optimization)
+        # First check bounding box
+        if not (
+            outer_xmin <= centroid[0] <= outer_xmax
+            and outer_ymin <= centroid[1] <= outer_ymax
+        ):
+            to_delete.append(idx)
+            continue
+        # Then do full polygon check
+        if not is_point_inside_polygon(centroid[0], centroid[1], outer):
+            to_delete.append(idx)
+            continue
+
+        # Check if inside any hole (with bbox optimization)
+        inside_hole = False
+        for hole, (xmin, ymin, xmax, ymax) in zip(holes, hole_bboxes):
+            # First check bounding box
+            if xmin <= centroid[0] <= xmax and ymin <= centroid[1] <= ymax:
+                # Only do full check if within bbox
+                if is_point_inside_polygon(centroid[0], centroid[1], hole):
+                    inside_hole = True
+                    break
+
+        if inside_hole:
             to_delete.append(idx)
 
     logger.debug(f"Removing {len(to_delete)} triangles (outside or in holes)")
