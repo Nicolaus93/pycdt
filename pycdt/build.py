@@ -5,7 +5,9 @@ from functools import partial
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
+from shewchuk import orientation
 
+from pycdt.aabb import AABBTree
 from pycdt.delaunay import Triangulation
 from pycdt.topology import (
     lawson_swapping,
@@ -15,7 +17,7 @@ from pycdt.topology import (
 from pycdt.geometry import (
     point_inside_triangle,
     ensure_ccw_triangle,
-    is_inside_domain,
+    is_point_inside_polygon,
     PointInTriangle,
 )
 
@@ -77,20 +79,19 @@ def find_containing_triangle(
                 opp_v=triangulation.triangle_vertices[triangle_idx][opp_v],
             )
 
-        # If not inside, find which edge to cross using the adjacent triangles information
+        # If not inside or on edge/vertex, find which edge to cross using the adjacent triangles information
         # Get edge indices in the triangle. NOTE!!! => it should be consistent with triangle_neighbors
         edges = [(1, 2), (2, 0), (0, 1)]
         candidates = []
         for i, (e1, e2) in enumerate(edges):
-            # Vector from edge to point
-            edge_vector = triangle[e2] - triangle[e1]
-            point_vector = point - triangle[e1]
+            x1, y1 = triangle[e1]
+            x2, y2 = triangle[e2]
+            px, py = point
 
-            # If cross product is negative, the point is on the "outside" of this edge
-            cross_prod = (
-                edge_vector[0] * point_vector[1] - edge_vector[1] * point_vector[0]
-            )
-            if cross_prod < 0:
+            # If orientation is negative, the point lies to the right of the edge
+            # → "outside" of this triangle
+            orient = orientation(x1, y1, x2, y2, px, py)
+            if orient < 0:
                 # Get the adjacent triangle for this edge
                 adjacent_idx = triangulation.triangle_neighbors[triangle_idx, i]
 
@@ -99,19 +100,33 @@ def find_containing_triangle(
                     candidates.append(adjacent_idx)
 
         if not candidates:
-            if len(visited) == len(triangulation.triangle_vertices):
-                triangulation.plot(show=True, fontsize=1)
-                raise ValueError(
-                    f"Couldn't find a triangle containing {point}! Visited: {visited}, triangulation has {len(triangulation.triangle_vertices)}"
-                )
-            logger.warning(
-                "No containing triangle found! Considering all triangles now.."
+            logger.debug(
+                f"Local walk failed after {steps} steps. Building AABB tree for fallback search."
             )
-            candidates = [
-                i
+            tree = AABBTree.from_triangulation(triangulation)
+            triangles = {
+                i: triangulation.all_points[triangulation.triangle_vertices[i]]
                 for i in range(len(triangulation.triangle_vertices))
-                if i not in visited
-            ]
+            }
+            found_idx = tree.find(point, triangles, point_inside_triangle)
+            if found_idx is not None:
+                v_indices = triangulation.triangle_vertices[found_idx]
+                point_position, opp_v = point_inside_triangle(
+                    triangulation.all_points[v_indices], point
+                )
+                return ContainingTriangle(
+                    idx=found_idx,
+                    position=point_position,
+                    opp_v=triangulation.triangle_vertices[found_idx][opp_v]
+                    if opp_v is not None
+                    else None,
+                )
+
+            # raise error otherwise
+            triangulation.plot(show=True, fontsize=1)
+            raise ValueError(
+                f"Couldn't find a triangle containing {point}! Visited: {visited}, triangulation has {len(triangulation.triangle_vertices)}"
+            )
 
         triangle_idx = candidates.pop()
         while triangle_idx in visited:
@@ -783,6 +798,13 @@ def remove_holes(
     outer_idx = int(np.argmax(areas))
     outer = [all_points[v] for v in polygons[outer_idx]]
 
+    # Compute bounding box for outer polygon
+    outer_array = np.array(outer)
+    outer_xmin = outer_array[:, 0].min()
+    outer_ymin = outer_array[:, 1].min()
+    outer_xmax = outer_array[:, 0].max()
+    outer_ymax = outer_array[:, 1].max()
+
     if debug:
         import matplotlib.pyplot as plt
 
@@ -797,12 +819,46 @@ def remove_holes(
         if i != outer_idx
     ]
 
+    # Compute bounding boxes for each hole
+    hole_bboxes = []
+    for hole in holes:
+        hole_array = np.array(hole)
+        xmin = hole_array[:, 0].min()
+        ymin = hole_array[:, 1].min()
+        xmax = hole_array[:, 0].max()
+        ymax = hole_array[:, 1].max()
+        hole_bboxes.append((xmin, ymin, xmax, ymax))
+
     # Classify triangles by centroid
     to_delete = []
     for idx, row in enumerate(tri_vertices):
         tri_points = all_points[row]
         centroid = np.mean(tri_points, axis=0)
-        if not is_inside_domain(centroid, outer, holes):
+
+        # Check if inside outer boundary (with bbox optimization)
+        # First check bounding box
+        if not (
+            outer_xmin <= centroid[0] <= outer_xmax
+            and outer_ymin <= centroid[1] <= outer_ymax
+        ):
+            to_delete.append(idx)
+            continue
+        # Then do full polygon check
+        if not is_point_inside_polygon(centroid[0], centroid[1], outer):
+            to_delete.append(idx)
+            continue
+
+        # Check if inside any hole (with bbox optimization)
+        inside_hole = False
+        for hole, (xmin, ymin, xmax, ymax) in zip(holes, hole_bboxes):
+            # First check bounding box
+            if xmin <= centroid[0] <= xmax and ymin <= centroid[1] <= ymax:
+                # Only do full check if within bbox
+                if is_point_inside_polygon(centroid[0], centroid[1], hole):
+                    inside_hole = True
+                    break
+
+        if inside_hole:
             to_delete.append(idx)
 
     logger.debug(f"Removing {len(to_delete)} triangles (outside or in holes)")
