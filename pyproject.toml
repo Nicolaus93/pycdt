@@ -23,3 +23,6 @@ pycdt = { path = "pycdt" }
 
 [tool.setuptools]
 packages = ["pycdt"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
