@@ -653,46 +653,57 @@ def insert_point(
     return triangulation
 
 
-def remove_super_triangle_triangles(
-    triangulation: Triangulation,
-    n_original_points: int,
-) -> None:
+def remove_super_triangle_triangles(triangulation: Triangulation) -> None:
     """
     Modify the Triangulation object in-place by removing triangles
     that contain vertices from the super triangle.
 
+    The super triangle vertices are always the last 3 points in all_points.
+
     :param triangulation: The Triangulation object to modify.
-    :param n_original_points: Number of original points (before adding super triangle vertices).
-    """
-    mask = np.all(triangulation.triangle_vertices < n_original_points, axis=1)
-
-    # remove triangles
-    triangulation.triangle_vertices = triangulation.triangle_vertices[mask]
-    # remove neighbors
-    triangulation.triangle_neighbors = triangulation.triangle_neighbors[mask]
-    # Update last_triangle_idx to point to a valid triangle (or 0 if no triangles left)
-    n_triangles = triangulation.triangle_vertices.shape[0]
-    triangulation.last_triangle_idx = max(0, n_triangles - 1) if n_triangles > 0 else 0
-    # remove super-triangle points
-    triangulation.all_points = triangulation.all_points[:-3]
-
-
-def finalize_triangulation(triangulation: Triangulation) -> None:
-    """
-    Remove the super triangle from the triangulation. This should be called
-    after all points have been added and before using the final triangulation.
-    The super triangle is always the last 3 points in the all_points array.
-
-    :param triangulation: The Triangulation object to finalize (modified in-place).
     """
     # The super triangle vertices are always the last 3 points
     n_original_points = len(triangulation.all_points) - 3
 
-    if n_original_points < 0:
-        # Already finalized or empty
-        return
+    # Create a mapping from old triangle indices to new indices
+    # old_to_new[i] = new index of triangle i, or -1 if removed
+    old_to_new = []
+    new_triangle_vertices = []
+    new_triangle_neighbors = []
 
-    remove_super_triangle_triangles(triangulation, n_original_points)
+    new_idx = 0
+    for old_idx, tri_verts in enumerate(triangulation.triangle_vertices):
+        # Check if all vertices are from original points (not super-triangle)
+        if all(v < n_original_points for v in tri_verts):
+            new_triangle_vertices.append(tri_verts)
+            new_triangle_neighbors.append(triangulation.triangle_neighbors[old_idx])
+            old_to_new.append(new_idx)
+            new_idx += 1
+        else:
+            old_to_new.append(-1)  # Triangle is removed
+
+    # Remap neighbor indices
+    for i, neighbors in enumerate(new_triangle_neighbors):
+        remapped_neighbors = []
+        for neighbor_idx in neighbors:
+            if neighbor_idx == -1:
+                # Border neighbor, keep as -1
+                remapped_neighbors.append(-1)
+            else:
+                # Remap using old_to_new (may become -1 if that triangle was removed)
+                remapped_neighbors.append(old_to_new[neighbor_idx])
+        new_triangle_neighbors[i] = remapped_neighbors
+
+    # Update triangulation with new arrays
+    triangulation.triangle_vertices = np.array(new_triangle_vertices, dtype=np.int32)
+    triangulation.triangle_neighbors = np.array(new_triangle_neighbors, dtype=np.int32)
+
+    # Update last_triangle_idx to point to a valid triangle (or 0 if no triangles left)
+    n_triangles = len(new_triangle_vertices)
+    triangulation.last_triangle_idx = max(0, n_triangles - 1) if n_triangles > 0 else 0
+
+    # Remove super-triangle points
+    triangulation.all_points = triangulation.all_points[:-3]
 
 
 def triangulate(
@@ -732,7 +743,7 @@ def triangulate(
 
     # Remove triangles that contain vertices of the super triangle if requested
     if finalize:
-        finalize_triangulation(triangulation)
+        remove_super_triangle_triangles(triangulation)
 
     return triangulation
 
@@ -825,7 +836,7 @@ def update_triangulation(
 
     # Remove triangles that contain vertices of the super triangle if requested
     if finalize:
-        finalize_triangulation(triangulation)
+        remove_super_triangle_triangles(triangulation)
 
     return triangulation
 
