@@ -4,7 +4,7 @@ import numpy as np
 from numpy._typing import NDArray
 from shewchuk import orientation
 
-EPS = 1e-12
+from pycdt.utils import EPS, Vec2d, Triangle
 
 
 class PointInTriangle(Enum):
@@ -14,88 +14,22 @@ class PointInTriangle(Enum):
     outside = auto()
 
 
-# def point_inside_triangle(
-#     triangle: NDArray[np.floating],
-#     point: NDArray[np.floating],
-#     eps: float = 1e-6,
-#     debug: bool = False,
-# ) -> tuple[PointInTriangle, int | None]:
-#     """
-#     Check if a point lies inside a triangle using the determinant method with numpy.
-#     - triangle: List of three vertices [(x1, y1), (x2, y2), (x3, y3)].
-#     - point: The point to check (x, y).
-#     - debug: If True, plot the triangle and the point.
-#     Returns True if the point is inside the triangle, False otherwise.
-#     """
-#     a, b, c = np.array(triangle)
-#
-#     det1 = orient2d(a, b, point)
-#     det2 = orient2d(b, c, point)
-#     det3 = orient2d(c, a, point)
-#
-#     # On vertex?
-#     if np.allclose(point, a, atol=eps):
-#         return PointInTriangle.vertex, None
-#     if np.allclose(point, b, atol=eps):
-#         return PointInTriangle.vertex, None
-#     if np.allclose(point, c, atol=eps):
-#         return PointInTriangle.vertex, None
-#
-#     # On which edge?
-#     if is_point_on_segment(a, b, point, eps):
-#         return PointInTriangle.edge, 2  # opposite vertex 2
-#     if is_point_on_segment(b, c, point, eps):
-#         return PointInTriangle.edge, 0  # opposite vertex 0
-#     if is_point_on_segment(c, a, point, eps):
-#         return PointInTriangle.edge, 1  # opposite vertex 1
-#
-#     # Inside / outside via signs (boundary counted inside)
-#     has_neg = (det1 < -eps) or (det2 < -eps) or (det3 < -eps)
-#     has_pos = (det1 > eps) or (det2 > eps) or (det3 > eps)
-#
-#     if debug:
-#         import matplotlib.pyplot as plt
-#
-#         tri_closed = np.vstack([triangle, triangle[0]])
-#         plt.figure()
-#         plt.plot(tri_closed[:, 0], tri_closed[:, 1], "b-")
-#         plt.scatter(*point, color="red")
-#         plt.axis("equal")
-#         plt.show()
-#
-#     if not (has_neg and has_pos):
-#         # it's zero
-#         return PointInTriangle.inside, None
-#     return PointInTriangle.outside, None
-
-
-# def is_point_on_segment(
-#     a: NDArray[np.floating],
-#     b: NDArray[np.floating],
-#     p: NDArray[np.floating],
-#     eps: float = 1e-12,
-# ) -> bool:
-#     # colinear?
-#     if abs(orient2d(a, b, p)) > eps:
-#         return False
-#     return (
-#         min(a[0], b[0]) - eps <= p[0] <= max(a[0], b[0]) + eps
-#         and min(a[1], b[1]) - eps <= p[1] <= max(a[1], b[1]) + eps
-#     )
-
-
 def is_point_in_box(
-    a: NDArray[np.floating], b: NDArray[np.floating], p: NDArray[np.floating]
+    a: Vec2d,
+    b: Vec2d,
+    p: Vec2d,
+    eps: float = EPS,
 ) -> bool:
     # check if p is within the bounding box of [a, b]
-    return min(a[0], b[0]) <= p[0] <= max(a[0], b[0]) and min(a[1], b[1]) <= p[
-        1
-    ] <= max(a[1], b[1])
+    return (
+        min(a[0], b[0]) - eps <= p[0] <= max(a[0], b[0]) + eps
+        and min(a[1], b[1]) - eps <= p[1] <= max(a[1], b[1]) + eps
+    )
 
 
 def point_inside_triangle(
-    triangle: NDArray[np.floating],
-    point: NDArray[np.floating],
+    triangle: Triangle,
+    point: Vec2d,
     eps: float = 1e-9,
     debug: bool = False,
 ) -> tuple[PointInTriangle, int | None]:
@@ -158,10 +92,10 @@ def point_inside_triangle(
     if debug:
         import matplotlib.pyplot as plt
 
-        tri_closed = np.vstack([triangle, triangle[0]])
+        tri_closed = np.vstack([triangle, triangle[0]])  # type: ignore[reportArgumentType]
         plt.figure()
         plt.plot(tri_closed[:, 0], tri_closed[:, 1], "b-")
-        plt.scatter(*point, color="red")
+        plt.scatter(*point, color="red")  # type: ignore[reportArgumentType]
         plt.axis("equal")
         plt.title("Outside Triangle")
         plt.show()
@@ -169,7 +103,7 @@ def point_inside_triangle(
     return PointInTriangle.outside, None
 
 
-def orient2d(pa: NDArray, pb: NDArray, pc: NDArray) -> float:
+def orient2d(pa: Vec2d, pb: Vec2d, pc: Vec2d) -> float:
     """
     Shewchuk's robust 2D orientation predicate.
     Returns > 0 if points are in counterclockwise order

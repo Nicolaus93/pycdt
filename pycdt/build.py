@@ -210,15 +210,26 @@ def initialize_triangulation(
     """
     Initialize the triangulation with a super triangle.
 
-    :param sorted_points: Sorted input points
-    :param margin: extra margin to ensure all points are inside the super triangle
+    :param sorted_points: Sorted input points (in original coordinates)
+    :param margin: multiplicative margin factor to ensure all points are inside the super triangle
     :return: All points array, triangle vertices, triangle neighbors, and last triangle index
     """
+    # Calculate bounding box of input points
+    min_vals = np.min(sorted_points, axis=0)
+    max_vals = np.max(sorted_points, axis=0)
+
+    # Calculate center and size
+    center = (min_vals + max_vals) / 2.0
+    size = max_vals - min_vals
+    scale = max(size[0], size[1]) * margin
+
+    # Create super triangle vertices that enclose all points
+    # Triangle shape similar to original but scaled to actual coordinates
     super_vertices = np.array(
         [
-            [-margin + 0.5, -margin / 2],
-            [margin + 0.5, -margin / 2],
-            [0.5, margin],
+            [center[0] - scale, center[1] - scale / 2],  # Bottom-left
+            [center[0] + scale, center[1] - scale / 2],  # Bottom-right
+            [center[0], center[1] + scale],  # Top
         ]
     )
 
@@ -642,58 +653,87 @@ def insert_point(
     return triangulation
 
 
-def remove_super_triangle_triangles(
-    triangulation: Triangulation,
-    n_original_points: int,
-) -> None:
+def remove_super_triangle_triangles(triangulation: Triangulation) -> None:
     """
     Modify the Triangulation object in-place by removing triangles
     that contain vertices from the super triangle.
 
-    :param triangulation: The Triangulation object to modify.
-    :param n_original_points: Number of original points (before adding super triangle vertices).
-    """
-    mask = np.all(triangulation.triangle_vertices < n_original_points, axis=1)
+    The super triangle vertices are always the last 3 points in all_points.
 
-    # remove triangles
-    triangulation.triangle_vertices = triangulation.triangle_vertices[mask]
-    # remove neighbors
-    triangulation.triangle_neighbors = triangulation.triangle_neighbors[mask]
-    triangulation.last_triangle_idx = triangulation.triangle_vertices.shape[0]
-    # remove super-triangle points
+    :param triangulation: The Triangulation object to modify.
+    """
+    # The super triangle vertices are always the last 3 points
+    n_original_points = len(triangulation.all_points) - 3
+
+    # Create a mapping from old triangle indices to new indices
+    # old_to_new[i] = new index of triangle i, or -1 if removed
+    old_to_new = []
+    new_triangle_vertices = []
+    new_triangle_neighbors = []
+
+    new_idx = 0
+    for old_idx, tri_verts in enumerate(triangulation.triangle_vertices):
+        # Check if all vertices are from original points (not super-triangle)
+        if all(v < n_original_points for v in tri_verts):
+            new_triangle_vertices.append(tri_verts)
+            new_triangle_neighbors.append(triangulation.triangle_neighbors[old_idx])
+            old_to_new.append(new_idx)
+            new_idx += 1
+        else:
+            old_to_new.append(-1)  # Triangle is removed
+
+    # Remap neighbor indices
+    for i, neighbors in enumerate(new_triangle_neighbors):
+        remapped_neighbors = []
+        for neighbor_idx in neighbors:
+            if neighbor_idx == -1:
+                # Border neighbor, keep as -1
+                remapped_neighbors.append(-1)
+            else:
+                # Remap using old_to_new (may become -1 if that triangle was removed)
+                remapped_neighbors.append(old_to_new[neighbor_idx])
+        new_triangle_neighbors[i] = remapped_neighbors
+
+    # Update triangulation with new arrays
+    triangulation.triangle_vertices = np.array(new_triangle_vertices, dtype=np.int32)
+    triangulation.triangle_neighbors = np.array(new_triangle_neighbors, dtype=np.int32)
+
+    # Update last_triangle_idx to point to a valid triangle (or 0 if no triangles left)
+    n_triangles = len(new_triangle_vertices)
+    triangulation.last_triangle_idx = max(0, n_triangles - 1) if n_triangles > 0 else 0
+
+    # Remove super-triangle points
     triangulation.all_points = triangulation.all_points[:-3]
 
 
 def triangulate(
-    points: NDArray[np.floating], margin: float = 10.0, debug: bool = False
-):
+    points: NDArray[np.floating],
+    margin: float = 10.0,
+    finalize: bool = True,
+    debug: bool = False,
+) -> Triangulation:
     """
-    Implement Delaunay triangulation using the incremental algorithm with efficient
-    adjacency tracking.
+    Create a new Delaunay triangulation from scratch.
 
     :param points: Input points to triangulate
-    :param margin: initial margin for the supertriangle points
+    :param margin: margin factor for the supertriangle (multiplicative)
+    :param finalize: If True, removes the supertriangle before returning. Set to False if you
+                     plan to add more points later using update_triangulation().
     :param debug: plot debug images
-    :return: List of triangles forming the Delaunay triangulation
+    :return: New Triangulation object
+
+    Example:
+        # Create a finalized triangulation (supertriangle removed)
+        tri = create_triangulation(points)
+
+        # Create triangulation but keep supertriangle (to add more points later)
+        tri = create_triangulation(points, finalize=False)
     """
-    # Sort points for efficient insertion
-    # Find the min and max along each axis (x and y)
-    min_vals = np.min(points, axis=0)
-    max_vals = np.max(points, axis=0)
-
-    # Normalize the points to [0, 1] range
-    normalized_points = (points - min_vals) / (max_vals - min_vals)
-    # sorted_points, sorted_indices = get_sorted_points(normalized_points)  # TODO: reactivate?
-    sorted_points = normalized_points
-
     # Initialize triangulation with super triangle
-    triangulation = initialize_triangulation(sorted_points, margin=margin)
-
-    n_original_points = len(sorted_points)
+    triangulation = initialize_triangulation(points, margin=margin)
 
     # Loop over each point and insert into triangulation
-    for point_idx, point in enumerate(sorted_points):
-        # Insert point and update triangulation
+    for point_idx, point in enumerate(points):
         triangulation = insert_point(
             point_idx=point_idx,
             point=point,
@@ -701,13 +741,102 @@ def triangulate(
             debug=debug,
         )
 
-    # Remove triangles that contain vertices of the super triangle
-    remove_super_triangle_triangles(triangulation, n_original_points)
+    # Remove triangles that contain vertices of the super triangle if requested
+    if finalize:
+        remove_super_triangle_triangles(triangulation)
 
-    # apply inverse initial transformation. TODO: not needed, we only need to know how points are connected
-    triangulation.all_points = (
-        triangulation.all_points * (max_vals - min_vals) + min_vals
+    return triangulation
+
+
+def update_triangulation(
+    triangulation: Triangulation,
+    new_points: NDArray[np.floating],
+    margin: float = 10.0,
+    finalize: bool = False,
+    debug: bool = False,
+) -> Triangulation:
+    """
+    Add new points to an existing triangulation incrementally.
+
+    The existing triangulation is preserved and only the new points are inserted.
+    The supertriangle is recalculated to accommodate all points (existing + new).
+
+    :param triangulation: Existing Triangulation object (with supertriangle still present)
+    :param new_points: New points to add to the triangulation
+    :param margin: margin factor for the supertriangle (multiplicative)
+    :param finalize: If True, removes the supertriangle before returning. Set to False if you
+                     plan to add even more points later.
+    :param debug: plot debug images
+    :return: Updated Triangulation object (same object, modified in-place)
+
+    Example:
+        # Create initial triangulation
+        tri = create_triangulation(initial_points, finalize=False)
+
+        # Add more points
+        tri = update_triangulation(tri, more_points, finalize=False)
+
+        # Add final batch and finalize
+        tri = update_triangulation(tri, final_points, finalize=True)
+    """
+    # Check that triangulation still has supertriangle
+    n_points_before_super = len(triangulation.all_points) - 3
+    if n_points_before_super < 0:
+        raise ValueError(
+            "Triangulation appears to be finalized or empty. Cannot add points to it. "
+            "Make sure the triangulation was created with finalize=False."
+        )
+
+    # Store the index where new points will start
+    new_point_start_idx = n_points_before_super
+
+    # Add new points to the points array (before the supertriangle vertices)
+    # Insert new points before the last 3 (supertriangle) vertices
+    triangulation.all_points = np.vstack(
+        [
+            triangulation.all_points[:n_points_before_super],  # existing points
+            new_points,  # new points
+            triangulation.all_points[n_points_before_super:],  # supertriangle vertices
+        ]
     )
+
+    # Recalculate supertriangle positions to accommodate all points (including new ones)
+    all_regular_points = triangulation.all_points[
+        :-3
+    ]  # All points except supertriangle
+    min_vals = np.min(all_regular_points, axis=0)
+    max_vals = np.max(all_regular_points, axis=0)
+    center = (min_vals + max_vals) / 2.0
+    size = max_vals - min_vals
+    scale = max(size[0], size[1]) * margin
+
+    # Update supertriangle vertex positions (last 3 points)
+    triangulation.all_points[-3] = [center[0] - scale, center[1] - scale / 2]
+    triangulation.all_points[-2] = [center[0] + scale, center[1] - scale / 2]
+    triangulation.all_points[-1] = [center[0], center[1] + scale]
+
+    # Update all triangle vertex indices to account for inserted points
+    # Points after new_point_start_idx need to be shifted by len(new_points)
+    for i in range(len(triangulation.triangle_vertices)):
+        for j in range(3):
+            vertex_idx = triangulation.triangle_vertices[i, j]
+            if vertex_idx >= new_point_start_idx:
+                # This vertex is part of supertriangle, shift its index
+                triangulation.triangle_vertices[i, j] = vertex_idx + len(new_points)
+
+    # Insert only the new points
+    for i, point in enumerate(new_points):
+        point_idx = new_point_start_idx + i
+        triangulation = insert_point(
+            point_idx=point_idx,
+            point=point,
+            triangulation=triangulation,
+            debug=debug,
+        )
+
+    # Remove triangles that contain vertices of the super triangle if requested
+    if finalize:
+        remove_super_triangle_triangles(triangulation)
 
     return triangulation
 
