@@ -57,6 +57,8 @@ t = triangulate(points)
 t.plot(exclude_super_t=True)
 ```
 
+See the `examples/` directory for more detailed usage examples.
+
 ## Algorithm Details
 
 ### Sloan's Algorithm
@@ -77,49 +79,6 @@ To handle numerical precision issues common in computational geometry, this impl
 
 These predicates use adaptive precision arithmetic to provide exact results even for nearly degenerate cases.
 
-## Project Structure
-
-```
-├── src/
-│   ├── delaunay/
-│   │   ├── __init__.py
-│   │   └── delaunay.py
-├── tests/
-│   └── test_cdt.py
-├── examples/
-│   └── circles.py
-├── assets/
-│   └── triangulation.gif
-├── pyproject.toml
-└── README.md
-└── uv.lock
-```
-
-## Examples
-
-See the `examples/` directory for more detailed usage examples:
-
-- `circles.py`: Creating animations and plots of the triangulation process
-
-## Development
-
-This project uses modern Python tooling:
-
-```bash
-# Install development dependencies
-uv sync --dev
-
-# Run tests
-pytest
-
-# Format code
-black .
-ruff check --fix .
-
-# Type checking
-mypy pycdt/
-```
-
 ## References
 
 - Sloan, S.W. (1987). "A fast algorithm for constructing Delaunay triangulations in the plane"
@@ -133,7 +92,7 @@ This is primarily an educational project, but contributions are welcome! Please:
 1. Fork the repository
 2. Create a feature branch
 3. Add tests for new functionality
-4. Ensure all tests pass and code is properly formatted
+4. Ensure all tests pass and code is properly formatted/linted (using pre-commit)
 5. Submit a pull request
 
 ## License
