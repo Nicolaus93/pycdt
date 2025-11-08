@@ -26,3 +26,7 @@ packages = ["pycdt"]
 
 [tool.bandit]
 exclude_dirs = ["tests"]
+
+[tool.pyright]
+include = ["pycdt"]
+exclude = ["tests"]

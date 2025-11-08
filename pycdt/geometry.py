@@ -92,10 +92,10 @@ def point_inside_triangle(
     if debug:
         import matplotlib.pyplot as plt
 
-        tri_closed = np.vstack([triangle, triangle[0]])
+        tri_closed = np.vstack([triangle, triangle[0]])  # type: ignore[reportArgumentType]
         plt.figure()
         plt.plot(tri_closed[:, 0], tri_closed[:, 1], "b-")
-        plt.scatter(*point, color="red")
+        plt.scatter(*point, color="red")  # type: ignore[reportArgumentType]
         plt.axis("equal")
         plt.title("Outside Triangle")
         plt.show()

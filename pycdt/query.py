@@ -110,7 +110,7 @@ def segment_intersects_triangle_interior(
 
 
 def segment_triangle_walk(
-    triangulation,  # type: Triangulation
+    triangulation,
     p: Vec2d | NDArray[np.floating],
     q: Vec2d | NDArray[np.floating],
     start_triangle_idx: int | None = None,
