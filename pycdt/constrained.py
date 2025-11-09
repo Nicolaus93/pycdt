@@ -53,10 +53,10 @@ def find_intesercting_edges(
     ----------
     triangulation : Triangulation
         The triangulation to search
-    p_idx : NDArray[np.floating]
-        Start point of constraint segment
-    q_idx : NDArray[np.floating]
-        End point of constraint segment
+    p_idx : int
+        Index of the start point of the constraint segment (vertex index)
+    q_idx : int
+        Index of the end point of the constraint segment (vertex index)
 
     Returns
     -------
