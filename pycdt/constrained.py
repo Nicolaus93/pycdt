@@ -158,9 +158,7 @@ def find_intersecting_edges(
                     continue
 
                 # record intersected edge
-                v1, v2 = sorted(
-                    (tri_verts[i], tri_verts[(i + 1) % 3]), key=lambda x: (x[0], x[1])
-                )
+                v1, v2 = sorted((tri_verts[i], tri_verts[(i + 1) % 3]))
                 intersecting.append(IntersectedEdge(v1, v2, current, neighbor_idx))
                 next_triangle = neighbor_idx
                 break
