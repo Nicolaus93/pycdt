@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
@@ -24,6 +26,28 @@ def find_neighbor_edge_index(
 
 
 class SharedEdgeError(Exception): ...
+
+
+@dataclass(frozen=True)
+class SwapDiagonalResult:
+    """Result of a diagonal swap operation.
+
+    Attributes
+    ----------
+    t7 : int
+        Triangle opposite to point_idx across one edge of the new diagonal
+    t8 : int
+        Triangle opposite to point_idx across the other edge of the new diagonal
+    diagonal_vk : int
+        First vertex index of the new diagonal edge
+    diagonal_vl : int
+        Second vertex index of the new diagonal edge
+    """
+
+    t7: int
+    t8: int
+    diagonal_vk: int
+    diagonal_vl: int
 
 
 def find_shared_edge(
@@ -58,14 +82,13 @@ def swap_diagonal(
     triangulation: Triangulation,
     t3_idx: int,
     t4_idx: int,
-    point_idx: int,
-) -> tuple[int, int]:
+    point_idx: int | None = None,
+) -> SwapDiagonalResult:
     """
-    Swap the diagonal between two adjacent triangles during Lawson swapping.
+    Swap the diagonal between two adjacent triangles.
 
-    This function is used during incremental Delaunay triangulation construction
-    to restore the Delaunay property by flipping edges. It specifically handles
-    the case where a newly inserted point violates the Delaunay condition.
+    This function performs an edge flip operation, replacing the shared edge between
+    two triangles with a new edge connecting the opposite vertices.
 
     The operation replaces the shared edge between two triangles with a new edge
     connecting the two opposite vertices, creating two new triangles.
@@ -90,29 +113,32 @@ def swap_diagonal(
     triangulation : Triangulation
         The triangulation to modify (modified in-place)
     t3_idx : int
-        Index of the neighboring triangle (does not contain point_idx)
+        Index of the neighboring triangle
     t4_idx : int
         Index of the candidate triangle (contains point_idx)
-    point_idx : int
-        Index of the newly inserted point that caused the Delaunay violation
+    point_idx : int | None, optional
+        Index of a vertex in t4_idx that is opposite to the shared edge.
+        If None, will be automatically determined from the shared edge.
 
     Returns
     -------
-    tuple[int, int]
-        (t7, t8) where:
-        - t7 is the triangle opposite to point_idx across edge (point_idx, b) in new t4_idx
-        - t8 is the triangle opposite to point_idx across edge (c, point_idx) in new t3_idx
-        These are the triangles that need to be checked next for Delaunay violations.
+    SwapDiagonalResult
+        A dataclass containing:
+        - t7: triangle opposite to point_idx across edge (point_idx, b) in new t4_idx
+        - t8: triangle opposite to point_idx across edge (c, point_idx) in new t3_idx
+        - diagonal_vk: first vertex index of the new diagonal (point_idx)
+        - diagonal_vl: second vertex index of the new diagonal (c)
+        The t7 and t8 triangles need to be checked next for Delaunay violations.
 
     Raises
     ------
     ValueError
-        If point_idx is not in triangle t4_idx or if the triangles don't share an edge
+        If point_idx is provided but not in triangle t4_idx, or if the triangles don't share an edge
 
     Notes
     -----
-    This is specifically designed for Lawson's incremental flip algorithm and differs
-    from the swap_diagonal in constrained.py which is used for constraint edge insertion.
+    This function is used both for Lawson's incremental flip algorithm during Delaunay
+    construction and for constraint edge insertion in constrained Delaunay triangulation.
     """
     vertices = triangulation.triangle_vertices
     neighbors = triangulation.triangle_neighbors
@@ -124,11 +150,15 @@ def swap_diagonal(
     # Find shared edge and opposite vertices
     a, b, temp, c = find_shared_edge(t4, t3)
 
-    # The candidate triangle should contain the newly inserted point
-    if temp not in t4:
-        raise ValueError
-    if not temp == point_idx:
-        raise ValueError
+    # If point_idx is not provided, use temp (the opposite vertex in t4)
+    if point_idx is None:
+        point_idx = temp
+    else:
+        # The candidate triangle should contain the newly inserted point
+        if temp not in t4:
+            raise ValueError("temp not in t4")
+        if not temp == point_idx:
+            raise ValueError(f"Expected point_idx {point_idx}, but got {temp}")
 
     # Create new triangles after edge flip
     # Ensure counterclockwise orientation
@@ -206,8 +236,8 @@ def swap_diagonal(
     update_neighbor_reference(t5, t4_idx, t3_idx)
     update_neighbor_reference(t7, t3_idx, t4_idx)
 
-    # return triangles opposite to point_idx in both new triangles
-    return t7, t8
+    # Return triangles opposite to point_idx and the new diagonal vertices
+    return SwapDiagonalResult(t7=t7, t8=t8, diagonal_vk=point_idx, diagonal_vl=c)
 
 
 def lawson_swapping(
@@ -249,7 +279,7 @@ def lawson_swapping(
         logger.trace(
             f"Point {point_idx} from triangle {t4_idx} lies in circumcircle of triangle {t3_idx}; flipping shared edge"
         )
-        t7, t8 = swap_diagonal(
+        result = swap_diagonal(
             triangulation,
             t3_idx,
             t4_idx,
@@ -258,10 +288,10 @@ def lawson_swapping(
 
         # Add new potentially illegal edges to stack
         #  (check edge opposite to point_idx in both new triangles)
-        if t8 != -1:
-            stack.append((int(t8), int(t3_idx)))
-        if t7 != -1:
-            stack.append((int(t7), int(t4_idx)))
+        if result.t8 != -1:
+            stack.append((int(result.t8), int(t3_idx)))
+        if result.t7 != -1:
+            stack.append((int(result.t7), int(t4_idx)))
 
 
 def reorder_neighbors_for_triangle(

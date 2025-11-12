@@ -11,10 +11,9 @@ from pycdt.geometry import (
     point_inside_triangle,
     PointInTriangle,
     is_point_in_box,
-    ensure_ccw_triangle,
 )
 from pycdt.utils import EPS, Vec2d
-from pycdt.topology import find_shared_edge, find_vertex_position
+from pycdt.topology import find_shared_edge, swap_diagonal
 from shewchuk import orientation
 
 
@@ -259,21 +258,25 @@ def remove_intersecting_edges(
             continue
 
         # Swap the diagonal: replace vk-vl with vm-vn
-        new_tri1_idx, new_tri2_idx = swap_diagonal(
-            triangulation, tri1_idx, tri2_idx, vk_idx, vl_idx, vm_idx, vn_idx
-        )
+        # Call swap_diagonal from topology.py (point_idx will be auto-determined)
+        result = swap_diagonal(triangulation, tri1_idx, tri2_idx)
 
-        # Check if the new diagonal vm-vn intersects the constraint
-        vm = triangulation.all_points[vm_idx]
-        vn = triangulation.all_points[vn_idx]
+        # Check if the new diagonal intersects the constraint
+        # Use the diagonal vertices returned from swap_diagonal
+        new_diag_v1 = triangulation.all_points[result.diagonal_vk]
+        new_diag_v2 = triangulation.all_points[result.diagonal_vl]
 
-        if segments_intersect(p, q, vm, vn):
+        if segments_intersect(p, q, new_diag_v1, new_diag_v2):
             # New diagonal still intersects, add to intersecting list
-            edge = IntersectedEdge(vm_idx, vn_idx, new_tri1_idx, new_tri2_idx)
+            edge = IntersectedEdge(
+                result.diagonal_vk, result.diagonal_vl, tri1_idx, tri2_idx
+            )
             intersecting.append(edge)
         else:
             # New diagonal doesn't intersect, add to newly created list
-            newly_created.append(tuple(sorted((vm_idx, vn_idx))))
+            newly_created.append(
+                tuple(sorted((result.diagonal_vk, result.diagonal_vl)))
+            )
 
     if intersecting:
         logger.warning(
@@ -368,141 +371,6 @@ def is_quadrilateral_convex(
         return False
 
     return True
-
-
-def swap_diagonal(
-    triangulation: Triangulation,
-    tri1_idx: int,
-    tri2_idx: int,
-    vk_idx: int,
-    vl_idx: int,
-    vm_idx: int,
-    vn_idx: int,
-) -> tuple[int, int]:
-    """
-    Swap the diagonal of a quadrilateral formed by two triangles.
-
-    This operation (also called edge flip) replaces the shared edge vk-vl with a new edge vm-vn,
-    where vm and vn are the vertices opposite to the shared edge in each triangle.
-
-    Before swap:
-        Triangle 1: (vk, vl, vm)
-        Triangle 2: (vk, vl, vn)
-        Shared edge: vk-vl
-
-    After swap:
-        Triangle 1: (vm, vn, vk)
-        Triangle 2: (vm, vl, vn)
-        Shared edge: vm-vn
-
-    The function updates:
-    - Triangle vertices to form the new triangles (ensuring CCW orientation)
-    - Triangle neighbor relationships for both modified triangles
-    - Neighbor references in adjacent triangles pointing to the modified triangles
-
-    Parameters
-    ----------
-    triangulation : Triangulation
-        The triangulation to modify (modified in-place)
-    tri1_idx, tri2_idx : int
-        Indices of the two triangles sharing edge vk-vl
-    vk_idx, vl_idx : int
-        Indices of the old diagonal vertices (shared edge to be removed)
-    vm_idx, vn_idx : int
-        Indices of the opposite vertices in each triangle (new diagonal endpoints)
-
-    Returns
-    -------
-    tuple[int, int]
-        The indices (tri1_idx, tri2_idx) of the two triangles that now share the new edge vm-vn.
-        These are the same triangle indices that were passed in, but with updated geometry.
-    """
-    points = triangulation.all_points
-    vertices = triangulation.triangle_vertices
-    neighbors = triangulation.triangle_neighbors
-
-    # Save old neighbor information
-    old_tri1_neighbors = neighbors[tri1_idx].copy()
-    old_tri2_neighbors = neighbors[tri2_idx].copy()
-    old_tri1_verts = vertices[tri1_idx].copy()
-    old_tri2_verts = vertices[tri2_idx].copy()
-
-    # Create new triangles after edge flip
-    # New tri1: vm, vn, vk (ensure CCW)
-    # New tri2: vm, vl, vn (ensure CCW)
-    new_tri1_vertices = ensure_ccw_triangle(np.array([vm_idx, vn_idx, vk_idx]), points)
-    new_tri2_vertices = ensure_ccw_triangle(np.array([vm_idx, vl_idx, vn_idx]), points)
-
-    # Update triangle vertices
-    vertices[tri1_idx] = new_tri1_vertices
-    vertices[tri2_idx] = new_tri2_vertices
-
-    # Update neighbors for the new triangles
-    # For tri1 (vm, vn, vk):
-    # - Edge opposite to vm (edge vn-vk): neighbor is the old neighbor of tri2 opposite to vl
-    # - Edge opposite to vn (edge vk-vm): neighbor is the old neighbor of tri2 opposite to vk
-    # - Edge opposite to vk (edge vm-vn): neighbor is tri2
-
-    # For tri2 (vm, vl, vn):
-    # - Edge opposite to vm (edge vl-vn): neighbor is the old neighbor of tri1 opposite to vk
-    # - Edge opposite to vl (edge vn-vm): neighbor is the old neighbor of tri1 opposite to vl
-    # - Edge opposite to vn (edge vm-vl): neighbor is tri1
-
-    # Find neighbor opposite to vl in old tri2
-    pos_vl_in_tri2 = find_vertex_position(old_tri2_verts, vl_idx)
-    neighbor_opp_vl = old_tri2_neighbors[pos_vl_in_tri2]
-
-    # Find neighbor opposite to vk in old tri2
-    pos_vk_in_tri2 = find_vertex_position(old_tri2_verts, vk_idx)
-    neighbor_opp_vk_tri2 = old_tri2_neighbors[pos_vk_in_tri2]
-
-    # Find neighbor opposite to vk in old tri1
-    pos_vk_in_tri1 = find_vertex_position(old_tri1_verts, vk_idx)
-    neighbor_opp_vk_tri1 = old_tri1_neighbors[pos_vk_in_tri1]
-
-    # Find neighbor opposite to vl in old tri1
-    pos_vl_in_tri1 = find_vertex_position(old_tri1_verts, vl_idx)
-    neighbor_opp_vl_tri1 = old_tri1_neighbors[pos_vl_in_tri1]
-
-    # Set neighbors for new tri1 (vm, vn, vk)
-    tri1_neighbors = np.array([-1, -1, -1], dtype=np.int32)
-    for i in range(3):
-        curr_v = new_tri1_vertices[i]
-        if curr_v == vm_idx:
-            tri1_neighbors[i] = neighbor_opp_vl
-        elif curr_v == vn_idx:
-            tri1_neighbors[i] = neighbor_opp_vk_tri2
-        elif curr_v == vk_idx:
-            tri1_neighbors[i] = tri2_idx
-
-    # Set neighbors for new tri2 (vm, vl, vn)
-    tri2_neighbors = np.array([-1, -1, -1], dtype=np.int32)
-    for i in range(3):
-        curr_v = new_tri2_vertices[i]
-        if curr_v == vm_idx:
-            tri2_neighbors[i] = neighbor_opp_vk_tri1
-        elif curr_v == vl_idx:
-            tri2_neighbors[i] = neighbor_opp_vl_tri1
-        elif curr_v == vn_idx:
-            tri2_neighbors[i] = tri1_idx
-
-    neighbors[tri1_idx] = tri1_neighbors
-    neighbors[tri2_idx] = tri2_neighbors
-
-    # Update references in neighboring triangles
-    def update_neighbor_reference(
-        neighbor_idx: int, old_triangle: int, new_triangle: int
-    ):
-        if neighbor_idx != -1:
-            mask = neighbors[neighbor_idx] == old_triangle
-            if np.any(mask):
-                neighbors[neighbor_idx][mask] = new_triangle
-
-    # Update neighbor references
-    update_neighbor_reference(neighbor_opp_vk_tri2, tri2_idx, tri1_idx)
-    update_neighbor_reference(neighbor_opp_vl_tri1, tri1_idx, tri2_idx)
-
-    return tri1_idx, tri2_idx
 
 
 def insert_constraint_edge(

@@ -257,3 +257,34 @@ def test_find_intersecting_edges_consistent_vertex_order():
     # According to the code, vertices should be sorted
     for edge in edges:
         assert edge.p1 <= edge.p2, "Edge vertices should be sorted"
+
+
+def test_find_intersecting_edges_debug_mode():
+    """Test that debug mode doesn't crash (visual output not verified)."""
+    import matplotlib
+
+    # Use non-interactive backend to avoid showing plots during tests
+    matplotlib.use("Agg")
+
+    points = np.array(
+        [
+            [0.0, 0.0],
+            [2.0, 0.0],
+            [2.0, 2.0],
+            [0.0, 2.0],
+            [1.0, 1.0],
+        ]
+    )
+
+    tri = triangulate(points)
+
+    p_idx = 0
+    q_idx = 2
+
+    # This should not crash even with debug=True
+    edges = find_intersecting_edges(tri, p_idx, q_idx, debug=True)
+
+    # Verify we still get valid results
+    assert len(edges) > 0
+    for edge in edges:
+        assert isinstance(edge, IntersectedEdge)
