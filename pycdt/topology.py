@@ -61,7 +61,58 @@ def swap_diagonal(
     point_idx: int,
 ) -> tuple[int, int]:
     """
-    TODO
+    Swap the diagonal between two adjacent triangles during Lawson swapping.
+
+    This function is used during incremental Delaunay triangulation construction
+    to restore the Delaunay property by flipping edges. It specifically handles
+    the case where a newly inserted point violates the Delaunay condition.
+
+    The operation replaces the shared edge between two triangles with a new edge
+    connecting the two opposite vertices, creating two new triangles.
+
+    Before swap:
+        Triangle t4_idx: contains point_idx and shares edge (a, b) with t3_idx
+        Triangle t3_idx: shares edge (a, b) with t4_idx, has opposite vertex c
+        Shared edge: (a, b)
+
+    After swap:
+        New triangle at t3_idx: (point_idx, c, a)
+        New triangle at t4_idx: (point_idx, b, c)
+        New shared edge: (point_idx, c)
+
+    The function updates:
+    - Triangle vertices to form new triangles (ensuring CCW orientation)
+    - Triangle neighbor relationships for both modified triangles
+    - Neighbor references in adjacent triangles
+
+    Parameters
+    ----------
+    triangulation : Triangulation
+        The triangulation to modify (modified in-place)
+    t3_idx : int
+        Index of the neighboring triangle (does not contain point_idx)
+    t4_idx : int
+        Index of the candidate triangle (contains point_idx)
+    point_idx : int
+        Index of the newly inserted point that caused the Delaunay violation
+
+    Returns
+    -------
+    tuple[int, int]
+        (t7, t8) where:
+        - t7 is the triangle opposite to point_idx across edge (point_idx, b) in new t4_idx
+        - t8 is the triangle opposite to point_idx across edge (c, point_idx) in new t3_idx
+        These are the triangles that need to be checked next for Delaunay violations.
+
+    Raises
+    ------
+    ValueError
+        If point_idx is not in triangle t4_idx or if the triangles don't share an edge
+
+    Notes
+    -----
+    This is specifically designed for Lawson's incremental flip algorithm and differs
+    from the swap_diagonal in constrained.py which is used for constraint edge insertion.
     """
     vertices = triangulation.triangle_vertices
     neighbors = triangulation.triangle_neighbors
