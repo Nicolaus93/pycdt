@@ -6,7 +6,6 @@ from loguru import logger
 
 from pycdt.debug_utils import _plot_intersecting_edges
 from pycdt.delaunay import Triangulation
-from pycdt.build import find_containing_triangle
 from pycdt.geometry import (
     point_inside_triangle,
     PointInTriangle,
@@ -14,30 +13,19 @@ from pycdt.geometry import (
 )
 from pycdt.utils import EPS, Vec2d
 from pycdt.topology import find_shared_edge, swap_diagonal
-from shewchuk import orientation
+from shewchuk import orientation, incircle_test
 
 
-def find_triangle_for_point(
-    triangulation: Triangulation, point: NDArray[np.floating]
-) -> int:
-    """Find triangle containing a point, handling the vertex case explicitly."""
-    # Check if point is on an existing vertex
-    vertex_matches = np.all(
-        np.isclose(triangulation.all_points, point, atol=EPS), axis=1
+def collinear_overlap(p: Vec2d, q: Vec2d, a: Vec2d, b: Vec2d) -> bool:
+    """
+    Given that a and b are collinear with pq, check if segment ab overlaps pq.
+    """
+    return (
+        is_point_in_box(p, q, a)
+        or is_point_in_box(p, q, b)
+        or is_point_in_box(a, b, p)
+        or is_point_in_box(a, b, q)
     )
-    if np.any(vertex_matches):
-        vertex_idx = np.argmax(vertex_matches)
-        # Find any triangle containing this vertex
-        for tri_idx, tri_verts in enumerate(triangulation.triangle_vertices):
-            if vertex_idx in tri_verts:
-                return tri_idx
-        raise RuntimeError(f"No triangle containing point {point}")
-
-    # Point is not on a vertex, use normal search
-    # TODO: use AABB search?
-    start_idx = 0
-    result = find_containing_triangle(triangulation, point, start_idx)
-    return result.idx
 
 
 @dataclass(frozen=True)
@@ -84,12 +72,15 @@ def find_intersecting_edges(
     q = triangulation.all_points[q_idx]
 
     # Find triangles containing p and q
-    tp = find_triangle_for_point(triangulation=triangulation, point=p)
-    tq = find_triangle_for_point(triangulation=triangulation, point=q)
+    tris_containing_p = np.where(triangulation.triangle_vertices == p_idx)[0]
+    tris_containing_q = np.where(triangulation.triangle_vertices == q_idx)[0]
+    if set(tris_containing_q) & set(tris_containing_p):
+        # edge is already part of the triangulation
+        return []
 
-    # If both points in same triangle, it means pq is an edge. Return that triangle
-    if tp == tq:
-        return [IntersectedEdge(p_idx, q_idx, tp, tp)]
+    # pick the first one (it doesn't matter)
+    tp = tris_containing_p[0]
+    tq = tris_containing_q[0]
 
     # Walk from tp to tq
     intersecting: list[IntersectedEdge] = []
@@ -120,18 +111,74 @@ def find_intersecting_edges(
             (c, a, 1),  # edge v2-v0, opposite vertex is v1
         ]
 
+        # --- test each edge to see if pq exits through it ---
         next_triangle = -1
         for i, (edge_start, edge_end, opposite_vertex_idx) in enumerate(edges):
-            # Skip intersection at starting/ending point
-            # case when both p and q are in the same triangle is already by if tp == tq: previously
-            # case when only q is equal to edge_start or edge_end is covered by point_inside_triangle(tri_points, q)
-            if np.allclose(p, edge_start, atol=EPS) or np.allclose(
-                p, edge_end, atol=EPS
-            ):
-                continue
+            # Orientation tests wrt pq
+            pqs_orient = orientation(*p, *q, *edge_start)
+            pqe_orient = orientation(*p, *q, *edge_end)
 
-            # Check if segment pq intersects this edge
+            # CASE A: Both endpoints collinear with pq
+            if pqs_orient == 0 and pqe_orient == 0:
+                # Edge lies on the same supporting line as pq.
+                if not collinear_overlap(p, q, edge_start, edge_end):
+                    # Collinear but disjoint → irrelevant
+                    continue
+
+                # Edge overlaps with pq. We should WALK across it,
+                # but we do NOT count it as an intersecting edge.
+                neighbor_idx = next(
+                    t
+                    for t in triangulation.triangle_neighbors[current]
+                    if t not in visited
+                    and t != -1  # don't go outside
+                    and (
+                        tri_verts[i] in triangulation.triangle_vertices[t]
+                        or tri_verts[(i + 1) % 3] in triangulation.triangle_vertices[t]
+                    )
+                )
+                next_triangle = neighbor_idx
+                # NOTE: do NOT append to "intersecting" here.
+                break
+
+            # ------------------------------------------------------------------
+            # CASE B: Exactly one endpoint collinear with pq
+            # ------------------------------------------------------------------
+            if (pqs_orient == 0) or (pqe_orient == 0):
+                # determine which endpoint is collinear
+                point = edge_start if pqs_orient == 0 else edge_end
+                point_idx = tri_verts[i] if pqs_orient == 0 else tri_verts[(i + 1) % 3]
+                if is_point_in_box(p, q, point):
+                    # walk into the triangle that contains this vertex and is unvisited
+                    try:
+                        neighbor_idx = next(
+                            t
+                            for t in triangulation.triangle_neighbors[current]
+                            if t not in visited
+                            and t != -1  # don't go outside
+                            and point_idx
+                            in triangulation.triangle_vertices[
+                                t
+                            ]  # next triangle should contain the p_idx
+                        )
+                        next_triangle = neighbor_idx
+                    except StopIteration:
+                        # we're at the vertex we already visited (p in p-v2)
+                        # p----v1----q
+                        # \    |
+                        #  \   |
+                        #   \  |
+                        #    \ |
+                        #     v2
+                        continue
+                break
+
+            # ------------------------------------------------------------------
+            # CASE C: Proper crossing?
+            # ------------------------------------------------------------------
             if not segments_intersect(p, q, edge_start, edge_end):
+                # Either no intersection or only touching at endpoints /
+                # collinearity handled above.
                 continue
 
             # Check if this is an exit edge (q is on the other side)
@@ -144,7 +191,7 @@ def find_intersecting_edges(
 
             # If signs differ, q is on the opposite side from the opposite vertex
             # This means this edge leads towards q
-            if o_q * o_opposite < 0 or o_q == 0:
+            if o_q * o_opposite < 0:
                 neighbor_idx = triangulation.triangle_neighbors[current][
                     opposite_vertex_idx
                 ]
@@ -215,6 +262,9 @@ def remove_intersecting_edges(
     list[tuple[int, int]]
         List of newly created edges that don't intersect the constraint
     """
+    if not edges:
+        return []
+
     p = triangulation.all_points[p_idx]
     q = triangulation.all_points[q_idx]
 
@@ -266,6 +316,13 @@ def remove_intersecting_edges(
         new_diag_v1 = triangulation.all_points[result.diagonal_vk]
         new_diag_v2 = triangulation.all_points[result.diagonal_vl]
 
+        # special case: check if the new diagonal coincides with the constraint
+        # stop flipping! The constraint is now part of the triangulation
+        diag_pts = sorted((new_diag_v1, new_diag_v2), key=lambda x: (x[0], x[1]))
+        constraint_pts = sorted((p, q), key=lambda x: (x[0], x[1]))
+        if np.allclose(diag_pts, constraint_pts, atol=EPS):
+            return []
+
         if segments_intersect(p, q, new_diag_v1, new_diag_v2):
             # New diagonal still intersects, add to intersecting list
             edge = IntersectedEdge(
@@ -279,7 +336,7 @@ def remove_intersecting_edges(
             )
 
     if intersecting:
-        logger.warning(
+        raise RuntimeError(
             f"Failed to remove all intersecting edges after {max_iterations} iterations. "
             f"{len(intersecting)} edges remain."
         )
@@ -373,18 +430,15 @@ def is_quadrilateral_convex(
     return True
 
 
-def insert_constraint_edge(
+def _insert_single_constraint(
     triangulation: Triangulation,
     p_idx: int,
     q_idx: int,
 ) -> bool:
     """
-    Insert a constraint edge into the triangulation.
+    Insert a single constraint edge into the triangulation.
 
-    This function:
-    1. Finds all edges intersected by the constraint
-    2. Removes those edges by edge swapping (edge flipping)
-    3. Returns True if the constraint was successfully inserted
+    This is an internal function. Use add_constraints() instead.
 
     Parameters
     ----------
@@ -420,15 +474,77 @@ def insert_constraint_edge(
         f"Constraint {p_idx}-{q_idx} inserted. Created {len(newly_created)} new edges."
     )
 
+    # Restore Delaunay triangulation
+    # Repeat until no more swaps occur
+    constraint_edge = {p_idx, q_idx}
+    max_iterations = len(newly_created) * 10
+    swapped = False
+    for iteration in range(max_iterations):
+        swapped = False
+        new_edges = []
+
+        for vk_idx, vl_idx in newly_created:
+            # Skip if this is the constraint edge
+            if {vk_idx, vl_idx} == constraint_edge:
+                new_edges.append((vk_idx, vl_idx))
+                continue
+
+            # Find the two triangles sharing this edge
+            tri1_idx, tri2_idx = find_triangles_sharing_edge(
+                triangulation, vk_idx, vl_idx
+            )
+
+            if tri1_idx == -1 or tri2_idx == -1:
+                # Edge is on the boundary, keep it
+                new_edges.append((vk_idx, vl_idx))
+                continue
+
+            # Get the opposite vertices
+            tri1_verts = triangulation.triangle_vertices[tri1_idx]
+            tri2_verts = triangulation.triangle_vertices[tri2_idx]
+            _, _, vm_idx, vn_idx = find_shared_edge(tri1_verts, tri2_verts)
+
+            # Check Delaunay criterion
+            # Get points
+            vk = triangulation.all_points[vk_idx]
+            vl = triangulation.all_points[vl_idx]
+            vm = triangulation.all_points[vm_idx]
+            vn = triangulation.all_points[vn_idx]
+
+            # Check if vm is inside circumcircle of triangle (vk, vl, vn)
+            # incircle_test returns positive if point is inside
+            if incircle_test(*vm, *vk, *vl, *vn) > 0:
+                # Delaunay criterion violated, swap the diagonal
+                swap_diagonal(triangulation, tri1_idx, tri2_idx)
+                # Replace edge in list with the new diagonal
+                new_edges.append(tuple(sorted((vm_idx, vn_idx))))
+                swapped = True
+            else:
+                # Delaunay criterion satisfied, keep the edge
+                new_edges.append((vk_idx, vl_idx))
+
+        newly_created = new_edges
+
+        if not swapped:
+            logger.debug(
+                f"Delaunay restoration complete after {iteration + 1} iteration(s)"
+            )
+            break
+
+    if swapped:
+        logger.warning(
+            f"Delaunay restoration did not converge after {max_iterations} iterations"
+        )
+
     return True
 
 
 def add_constraints(
     triangulation: Triangulation,
     constraints: list[tuple[int, int]],
-) -> None:
+) -> bool:
     """
-    Add constraint edges to a triangulation.
+    Add constraint edge(s) to a triangulation.
 
     This modifies the triangulation to include the constraint edges,
     creating a Constrained Delaunay Triangulation (CDT).
@@ -437,9 +553,15 @@ def add_constraints(
     ----------
     triangulation : Triangulation
         The triangulation to constrain (modified in-place)
-    constraints : list[tuple[int, int]]
-        List of constraint edges as (vertex_idx_1, vertex_idx_2) pairs.
+    constraints : list[tuple[int, int]] or tuple[int, int]
+        Either a single constraint edge as (p_idx, q_idx) or a list of
+        constraint edges as [(v1_idx, v2_idx), ...].
         Vertex indices refer to indices in triangulation.all_points.
+
+    Returns
+    -------
+    bool
+        True if all constraints were successfully inserted, False otherwise
 
     Notes
     -----
@@ -448,16 +570,25 @@ def add_constraints(
     - Be as close to Delaunay as possible while respecting constraints
     - May have some triangles that violate the Delaunay property if necessary
       to accommodate the constraints
-    """
-    logger.info(f"Adding {len(constraints)} constraints to triangulation")
 
-    for i, (v1_idx, v2_idx) in enumerate(constraints):
+    Example
+    --------
+    >>> add_constraints(tri, [(0, 5), (1, 6), (2, 7)])
+    """
+    constraint_list = list(constraints)
+    logger.info(f"Adding {len(constraint_list)} constraint(s) to triangulation")
+
+    all_success = True
+    for i, (v1_idx, v2_idx) in enumerate(constraint_list):
         logger.debug(
-            f"Processing constraint {i + 1}/{len(constraints)}: {v1_idx}-{v2_idx}"
+            f"Processing constraint {i + 1}/{len(constraint_list)}: {v1_idx}-{v2_idx}"
         )
-        success = insert_constraint_edge(triangulation, v1_idx, v2_idx)
+        success = _insert_single_constraint(triangulation, v1_idx, v2_idx)
         if not success:
             logger.warning(f"Failed to insert constraint {v1_idx}-{v2_idx}")
+            all_success = False
+
+    return all_success
 
 
 def segments_intersect(
@@ -469,11 +600,9 @@ def segments_intersect(
     """
     Check if two line segments [p1, p2] and [q1, q2] intersect (including endpoints).
 
-    Uses the orientation-based method: two segments intersect if and only if
-    one of the following conditions holds:
-    1. General case: (q1, q2, p1) and (q1, q2, p2) have different orientations AND
-                     (p1, p2, q1) and (p1, p2, q2) have different orientations
-    2. Special case: Points are collinear and segments overlap
+    Uses the orientation-based method: two segments intersect if and only if:
+    (q1, q2, p1) and (q1, q2, p2) have different orientations AND (p1, p2, q1) and (p1, p2, q2) have different
+    orientations
 
     Parameters
     ----------
@@ -481,8 +610,6 @@ def segments_intersect(
         Endpoints of first segment
     q1, q2 : NDArray[np.floating]
         Endpoints of second segment
-    eps : float
-        Tolerance for coordinate equality
 
     Returns
     -------
@@ -494,18 +621,13 @@ def segments_intersect(
     o3 = orientation(*p1, *p2, *q1)
     o4 = orientation(*p1, *p2, *q2)
 
+    # If any are exactly collinear, this is not a proper intersection
+    # (we handle collinearity separately).
+    if o1 == 0 or o2 == 0 or o3 == 0 or o4 == 0:
+        return False
+
     # General case: segments intersect if orientations differ
     if o1 * o2 < 0 and o3 * o4 < 0:
-        return True
-
-    # Special cases: check if points are collinear and segments overlap
-    if o1 == 0 and is_point_in_box(q1, q2, p1):
-        return True
-    if o2 == 0 and is_point_in_box(q1, q2, p2):
-        return True
-    if o3 == 0 and is_point_in_box(p1, p2, q1):
-        return True
-    if o4 == 0 and is_point_in_box(p1, p2, q2):
         return True
 
     return False
