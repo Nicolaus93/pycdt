@@ -28,12 +28,299 @@ def collinear_overlap(p: Vec2d, q: Vec2d, a: Vec2d, b: Vec2d) -> bool:
     )
 
 
+def segments_intersect(
+    p1: Vec2d | NDArray[np.floating],
+    p2: Vec2d | NDArray[np.floating],
+    q1: Vec2d | NDArray[np.floating],
+    q2: Vec2d | NDArray[np.floating],
+) -> bool:
+    """
+    Check if two line segments [p1, p2] and [q1, q2] intersect (including endpoints).
+
+    Uses the orientation-based method: two segments intersect if and only if:
+    (q1, q2, p1) and (q1, q2, p2) have different orientations AND (p1, p2, q1) and (p1, p2, q2) have different
+    orientations
+
+    Parameters
+    ----------
+    p1, p2 : NDArray[np.floating]
+        Endpoints of first segment
+    q1, q2 : NDArray[np.floating]
+        Endpoints of second segment
+
+    Returns
+    -------
+    bool
+        True if segments intersect, False otherwise
+    """
+    o1 = orientation(*q1, *q2, *p1)
+    o2 = orientation(*q1, *q2, *p2)
+    o3 = orientation(*p1, *p2, *q1)
+    o4 = orientation(*p1, *p2, *q2)
+
+    # If any are exactly collinear, this is not a proper intersection
+    # (we handle collinearity separately).
+    if o1 == 0 or o2 == 0 or o3 == 0 or o4 == 0:
+        return False
+
+    # General case: segments intersect if orientations differ
+    if o1 * o2 < 0 and o3 * o4 < 0:
+        return True
+
+    return False
+
+
 @dataclass(frozen=True)
 class IntersectedEdge:
     p1: int
     p2: int
     triangle_1: int
     triangle_2: int
+
+
+def _check_proper_crossing(
+    triangulation: Triangulation,
+    current_tri_idx: int,
+    p_idx: int,
+    q_idx: int,
+    visited: set[int],
+) -> tuple[int, IntersectedEdge | None]:
+    """
+    Case C: Check for proper crossing (segments intersect but endpoints not collinear).
+
+    This checks if the constraint segment pq properly crosses any edge of the current triangle.
+    A proper crossing means the segments intersect at an interior point (not at endpoints).
+
+    Parameters
+    ----------
+    triangulation : Triangulation
+        The triangulation
+    current_tri_idx : int
+        Current triangle index
+    p_idx : int
+        Start vertex index of constraint
+    q_idx : int
+        End vertex index of constraint
+    visited : set[int]
+        Set of already visited triangle indices
+
+    Returns
+    -------
+    tuple[int, IntersectedEdge | None]
+        (next_triangle_idx, intersected_edge) or (-1, None) if no crossing found
+    """
+    p = triangulation.all_points[p_idx]
+    q = triangulation.all_points[q_idx]
+
+    tri_verts = triangulation.triangle_vertices[current_tri_idx]
+    tri_points = triangulation.all_points[tri_verts]
+
+    a, b, c = tri_points
+    edges = [
+        (a, b, 2, 0, 1),  # edge v0-v1, opposite vertex is v2
+        (b, c, 0, 1, 2),  # edge v1-v2, opposite vertex is v0
+        (c, a, 1, 2, 0),  # edge v2-v0, opposite vertex is v1
+    ]
+
+    for edge_start, edge_end, opposite_vertex_idx, v_start_local, v_end_local in edges:
+        # Orientation tests wrt pq
+        pqs_orient = orientation(*p, *q, *edge_start)
+        pqe_orient = orientation(*p, *q, *edge_end)
+
+        # Skip if any endpoint is collinear (handled by other cases)
+        if pqs_orient == 0 or pqe_orient == 0:
+            continue
+
+        # Check if segments intersect
+        if not segments_intersect(p, q, edge_start, edge_end):
+            continue
+
+        # Check if this is an exit edge (q is on the other side)
+        o_q = orientation(*edge_start, *edge_end, *q)
+        o_opposite = orientation(
+            *edge_start, *edge_end, *tri_points[opposite_vertex_idx]
+        )
+
+        # If signs differ, q is on the opposite side from the opposite vertex
+        if o_q * o_opposite < 0:
+            neighbor_idx = triangulation.triangle_neighbors[current_tri_idx][
+                opposite_vertex_idx
+            ]
+
+            if neighbor_idx == -1:
+                raise RuntimeError("Ended up outside triangulation")
+
+            if neighbor_idx in visited:
+                continue
+
+            # Record intersected edge
+            v1, v2 = sorted((tri_verts[v_start_local], tri_verts[v_end_local]))
+            edge = IntersectedEdge(v1, v2, current_tri_idx, neighbor_idx)
+            return neighbor_idx, edge
+
+    return -1, None
+
+
+def _check_collinear_overlap(
+    triangulation: Triangulation,
+    current_tri_idx: int,
+    p_idx: int,
+    q_idx: int,
+    visited: set[int],
+) -> tuple[int, IntersectedEdge | None]:
+    """
+    Case A: Both edge endpoints are collinear with pq.
+
+    When both endpoints of a triangle edge lie on the line containing pq,
+    we need to check if the edge overlaps with the segment pq. If so,
+    we walk across it but DON'T record it as intersecting.
+
+    Parameters
+    ----------
+    triangulation : Triangulation
+        The triangulation
+    current_tri_idx : int
+        Current triangle index
+    p_idx : int
+        Start vertex index of constraint
+    q_idx : int
+        End vertex index of constraint
+    visited : set[int]
+        Set of already visited triangle indices
+
+    Returns
+    -------
+    tuple[int, IntersectedEdge | None]
+        (next_triangle_idx, None) or (-1, None) if no overlap found.
+        Note: Returns None for edge because collinear edges are not counted as intersecting.
+    """
+    p = triangulation.all_points[p_idx]
+    q = triangulation.all_points[q_idx]
+
+    tri_verts = triangulation.triangle_vertices[current_tri_idx]
+    tri_points = triangulation.all_points[tri_verts]
+
+    a, b, c = tri_points
+    edges = [
+        (a, b, 0, 1),  # edge v0-v1
+        (b, c, 1, 2),  # edge v1-v2
+        (c, a, 2, 0),  # edge v2-v0
+    ]
+
+    for edge_start, edge_end, v_start_local, v_end_local in edges:
+        # Orientation tests wrt pq
+        pqs_orient = orientation(*p, *q, *edge_start)
+        pqe_orient = orientation(*p, *q, *edge_end)
+
+        # Only handle case where BOTH endpoints are collinear
+        if not (pqs_orient == 0 and pqe_orient == 0):
+            continue
+
+        # Check if edge overlaps with pq
+        if not collinear_overlap(p, q, edge_start, edge_end):
+            continue
+
+        # Find neighbor triangle that shares this edge and is unvisited
+        try:
+            neighbor_idx = next(
+                t
+                for t in triangulation.triangle_neighbors[current_tri_idx]
+                if t not in visited
+                and t != -1  # don't go outside
+                and (
+                    tri_verts[v_start_local] in triangulation.triangle_vertices[t]
+                    or tri_verts[v_end_local] in triangulation.triangle_vertices[t]
+                )
+            )
+            return neighbor_idx, None
+        except StopIteration:
+            continue
+
+    return -1, None
+
+
+def _check_one_endpoint_collinear(
+    triangulation: Triangulation,
+    current_tri_idx: int,
+    p_idx: int,
+    q_idx: int,
+    visited: set[int],
+) -> tuple[int, IntersectedEdge | None]:
+    """
+    Case B: Exactly one endpoint is collinear with pq.
+
+    When exactly one endpoint of a triangle edge is collinear with the line pq,
+    and that point lies within the segment pq, we walk to the next triangle
+    containing that vertex.
+
+    Parameters
+    ----------
+    triangulation : Triangulation
+        The triangulation
+    current_tri_idx : int
+        Current triangle index
+    p_idx : int
+        Start vertex index of constraint
+    q_idx : int
+        End vertex index of constraint
+    visited : set[int]
+        Set of already visited triangle indices
+
+    Returns
+    -------
+    tuple[int, IntersectedEdge | None]
+        (next_triangle_idx, None) or (-1, None) if no match found.
+    """
+    p = triangulation.all_points[p_idx]
+    q = triangulation.all_points[q_idx]
+
+    tri_verts = triangulation.triangle_vertices[current_tri_idx]
+    tri_points = triangulation.all_points[tri_verts]
+
+    a, b, c = tri_points
+    edges = [
+        (a, b),  # edge v0-v1
+        (b, c),  # edge v1-v2
+        (c, a),  # edge v2-v0
+    ]
+
+    for pos, val in enumerate(edges):
+        edge_start, edge_end = val
+
+        # Orientation tests wrt pq
+        pqs_orient = orientation(*p, *q, *edge_start)
+        pqe_orient = orientation(*p, *q, *edge_end)
+
+        # Only handle case where EXACTLY one endpoint is collinear
+        if (pqs_orient == 0 and pqe_orient == 0) or (
+            pqs_orient != 0 and pqe_orient != 0
+        ):  # XOR
+            # keeps going only when:
+            # - both are zero, or
+            # - both are non-zero.
+            continue
+
+        # Determine which endpoint is collinear
+        point = edge_start if pqs_orient == 0 else edge_end
+        point_idx = tri_verts[pos] if pqs_orient == 0 else tri_verts[(pos + 1) % 3]
+        if not is_point_in_box(p, q, point):
+            continue
+
+        # Walk into the triangle that contains this vertex and is unvisited
+        try:
+            neighbor_idx = next(
+                t
+                for t in triangulation.triangle_neighbors[current_tri_idx]
+                if t not in visited
+                and t != -1  # don't go outside
+                and point_idx in triangulation.triangle_vertices[t]
+            )
+            return neighbor_idx, None
+        except StopIteration:
+            # We're at a vertex we already visited
+            continue
+
+    return -1, None
 
 
 def find_intersecting_edges(
@@ -101,115 +388,31 @@ def find_intersecting_edges(
             # Reached destination
             break
 
-        # Find which edge the segment pq exits through
-        # Triangle edges are: (v0,v1), (v1,v2), (v2,v0)
-        # The neighbor opposite to vertex i is at triangle_neighbors[current][i]
-        a, b, c = tri_points
-        edges = [
-            (a, b, 2),  # edge v0-v1, opposite vertex is v2
-            (b, c, 0),  # edge v1-v2, opposite vertex is v0
-            (c, a, 1),  # edge v2-v0, opposite vertex is v1
-        ]
+        # Try to find the next triangle by checking each case in order:
+        # 1. Case C: Proper crossing (non-collinear intersection)
+        # 2. Case A: Collinear overlap (both endpoints on line pq)
+        # 3. Case B: One endpoint collinear
 
-        # --- test each edge to see if pq exits through it ---
-        next_triangle = -1
-        for i, (edge_start, edge_end, opposite_vertex_idx) in enumerate(edges):
-            # Orientation tests wrt pq
-            pqs_orient = orientation(*p, *q, *edge_start)
-            pqe_orient = orientation(*p, *q, *edge_end)
+        # Try Case C first (proper crossing)
+        next_triangle, intersected_edge = _check_proper_crossing(
+            triangulation, current, p_idx, q_idx, visited
+        )
 
-            # CASE A: Both endpoints collinear with pq
-            if pqs_orient == 0 and pqe_orient == 0:
-                # Edge lies on the same supporting line as pq.
-                if not collinear_overlap(p, q, edge_start, edge_end):
-                    # Collinear but disjoint → irrelevant
-                    continue
-
-                # Edge overlaps with pq. We should WALK across it,
-                # but we do NOT count it as an intersecting edge.
-                neighbor_idx = next(
-                    t
-                    for t in triangulation.triangle_neighbors[current]
-                    if t not in visited
-                    and t != -1  # don't go outside
-                    and (
-                        tri_verts[i] in triangulation.triangle_vertices[t]
-                        or tri_verts[(i + 1) % 3] in triangulation.triangle_vertices[t]
-                    )
-                )
-                next_triangle = neighbor_idx
-                # NOTE: do NOT append to "intersecting" here.
-                break
-
-            # ------------------------------------------------------------------
-            # CASE B: Exactly one endpoint collinear with pq
-            # ------------------------------------------------------------------
-            if (pqs_orient == 0) or (pqe_orient == 0):
-                # determine which endpoint is collinear
-                point = edge_start if pqs_orient == 0 else edge_end
-                point_idx = tri_verts[i] if pqs_orient == 0 else tri_verts[(i + 1) % 3]
-                if is_point_in_box(p, q, point):
-                    # walk into the triangle that contains this vertex and is unvisited
-                    try:
-                        neighbor_idx = next(
-                            t
-                            for t in triangulation.triangle_neighbors[current]
-                            if t not in visited
-                            and t != -1  # don't go outside
-                            and point_idx
-                            in triangulation.triangle_vertices[
-                                t
-                            ]  # next triangle should contain the p_idx
-                        )
-                        next_triangle = neighbor_idx
-                    except StopIteration:
-                        # we're at the vertex we already visited (p in p-v2)
-                        # p----v1----q
-                        # \    |
-                        #  \   |
-                        #   \  |
-                        #    \ |
-                        #     v2
-                        continue
-                break
-
-            # ------------------------------------------------------------------
-            # CASE C: Proper crossing?
-            # ------------------------------------------------------------------
-            if not segments_intersect(p, q, edge_start, edge_end):
-                # Either no intersection or only touching at endpoints /
-                # collinearity handled above.
-                continue
-
-            # Check if this is an exit edge (q is on the other side)
-            # Use orientation test: if q and the opposite vertex are on different sides,
-            # this is an exit edge
-            o_q = orientation(*edge_start, *edge_end, *q)
-            o_opposite = orientation(
-                *edge_start, *edge_end, *tri_points[opposite_vertex_idx]
+        # If Case C didn't find anything, try Case A (collinear overlap)
+        if next_triangle == -1:
+            next_triangle, intersected_edge = _check_collinear_overlap(
+                triangulation, current, p_idx, q_idx, visited
             )
 
-            # If signs differ, q is on the opposite side from the opposite vertex
-            # This means this edge leads towards q
-            if o_q * o_opposite < 0:
-                neighbor_idx = triangulation.triangle_neighbors[current][
-                    opposite_vertex_idx
-                ]
-                if neighbor_idx == -1:
-                    # TODO: what if we walk along the border?
-                    #     _   _
-                    #   /\  /\  /\
-                    # P ---.---.--- Q
-                    raise RuntimeError("Ended up outside triangulation")
-                if neighbor_idx in visited:
-                    # if it's in visited, it could be the one where we're "coming" from
-                    continue
+        # If Case A didn't find anything, try Case B (one endpoint collinear)
+        if next_triangle == -1:
+            next_triangle, intersected_edge = _check_one_endpoint_collinear(
+                triangulation, current, p_idx, q_idx, visited
+            )
 
-                # record intersected edge
-                v1, v2 = sorted((tri_verts[i], tri_verts[(i + 1) % 3]))
-                intersecting.append(IntersectedEdge(v1, v2, current, neighbor_idx))
-                next_triangle = neighbor_idx
-                break
+        # Record the intersected edge if one was found
+        if intersected_edge is not None:
+            intersecting.append(intersected_edge)
 
         if next_triangle == -1:
             raise RuntimeError(
@@ -575,13 +778,11 @@ def add_constraints(
     --------
     >>> add_constraints(tri, [(0, 5), (1, 6), (2, 7)])
     """
-    constraint_list = list(constraints)
-    logger.info(f"Adding {len(constraint_list)} constraint(s) to triangulation")
-
+    logger.info(f"Adding {len(constraints)} constraint(s) to triangulation")
     all_success = True
-    for i, (v1_idx, v2_idx) in enumerate(constraint_list):
+    for i, (v1_idx, v2_idx) in enumerate(constraints):
         logger.debug(
-            f"Processing constraint {i + 1}/{len(constraint_list)}: {v1_idx}-{v2_idx}"
+            f"Processing constraint {i + 1}/{len(constraints)}: {v1_idx}-{v2_idx}"
         )
         success = _insert_single_constraint(triangulation, v1_idx, v2_idx)
         if not success:
@@ -589,45 +790,3 @@ def add_constraints(
             all_success = False
 
     return all_success
-
-
-def segments_intersect(
-    p1: Vec2d | NDArray[np.floating],
-    p2: Vec2d | NDArray[np.floating],
-    q1: Vec2d | NDArray[np.floating],
-    q2: Vec2d | NDArray[np.floating],
-) -> bool:
-    """
-    Check if two line segments [p1, p2] and [q1, q2] intersect (including endpoints).
-
-    Uses the orientation-based method: two segments intersect if and only if:
-    (q1, q2, p1) and (q1, q2, p2) have different orientations AND (p1, p2, q1) and (p1, p2, q2) have different
-    orientations
-
-    Parameters
-    ----------
-    p1, p2 : NDArray[np.floating]
-        Endpoints of first segment
-    q1, q2 : NDArray[np.floating]
-        Endpoints of second segment
-
-    Returns
-    -------
-    bool
-        True if segments intersect, False otherwise
-    """
-    o1 = orientation(*q1, *q2, *p1)
-    o2 = orientation(*q1, *q2, *p2)
-    o3 = orientation(*p1, *p2, *q1)
-    o4 = orientation(*p1, *p2, *q2)
-
-    # If any are exactly collinear, this is not a proper intersection
-    # (we handle collinearity separately).
-    if o1 == 0 or o2 == 0 or o3 == 0 or o4 == 0:
-        return False
-
-    # General case: segments intersect if orientations differ
-    if o1 * o2 < 0 and o3 * o4 < 0:
-        return True
-
-    return False

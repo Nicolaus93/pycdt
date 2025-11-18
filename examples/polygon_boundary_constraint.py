@@ -61,11 +61,14 @@ def main():
 
     # Define boundary constraints
     constraints = [
-        # (5, 0),
-        # (1, 2),
-        # (5, 3),
-        # (0, 1),
+        (5, 0),
+        (1, 2),
+        (5, 3),
+        (0, 1),
         (2, 3),  # Horizontal middle edge
+        (0, 7),
+        (7, 6),
+        (1, 2),
     ]
 
     print(
