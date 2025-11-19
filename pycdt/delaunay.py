@@ -21,6 +21,7 @@ class Triangulation:
         exclude_super_t: bool = False,
         exclude_unused_points: bool = True,
         fontsize: int = 7,
+        constraints: list[tuple[int, int]] | None = None,
     ) -> None:
         """
         Plot the triangulation using matplotlib.
@@ -28,6 +29,10 @@ class Triangulation:
         :param show: Whether to call plt.show() after plotting
         :param title: Title of the plot
         :param point_labels: Whether to label points with their indices
+        :param exclude_super_t: Whether to exclude super triangle
+        :param exclude_unused_points: Whether to exclude unused points
+        :param fontsize: Font size for labels
+        :param constraints: List of constraint edges as (v1_idx, v2_idx) tuples to highlight in red
         """
         import matplotlib.pyplot as plt
 
@@ -61,7 +66,7 @@ class Triangulation:
         for tri_idx, tri in enumerate(triangle_vertices):
             pts = all_points[tri]
             tri_closed = np.vstack([pts, pts[0]])  # Close the triangle
-            ax.plot(tri_closed[:, 0], tri_closed[:, 1], "k-", linewidth=1)
+            ax.plot(tri_closed[:, 0], tri_closed[:, 1], "b-", linewidth=1.0, alpha=0.6)
 
             # Triangle index at centroid
             centroid = np.mean(pts, axis=0)
@@ -90,16 +95,44 @@ class Triangulation:
                         )
                         # ax.plot(x, y, "ro", markersize=3)
 
+        # Draw constraint edges if provided
+        if constraints:
+            for v1_idx, v2_idx in constraints:
+                if v1_idx < len(all_points) and v2_idx < len(all_points):
+                    p1 = all_points[v1_idx]
+                    p2 = all_points[v2_idx]
+                    ax.plot(
+                        [p1[0], p2[0]],
+                        [p1[1], p2[1]],
+                        "r-",
+                        linewidth=2.5,
+                        label="Constraint"
+                        if (v1_idx, v2_idx) == constraints[0]
+                        else "",
+                        zorder=10,  # Draw on top
+                    )
+
         # Draw points
-        ax.plot(all_points[:, 0], all_points[:, 1], "ro", markersize=fontsize)
-        # # Optional: Label all points with their indices in blue
-        # if point_labels:
-        #     for idx, (x, y) in enumerate(all_points):
-        #         ax.text(
-        #             x, y, str(idx), fontsize=8, ha="right", va="bottom", color="blue"
-        #         )
+        ax.plot(all_points[:, 0], all_points[:, 1], "ko", markersize=5, zorder=11)
+
+        # Add vertex labels if requested
+        if point_labels:
+            for idx in used_vertices:
+                if idx < len(all_points):
+                    x, y = all_points[idx]
+                    ax.text(
+                        x + offset,
+                        y + offset,
+                        str(idx),
+                        fontsize=fontsize,
+                        ha="left",
+                        va="bottom",
+                        color="darkgreen",
+                    )
 
         ax.set_aspect("equal")
+        if constraints:
+            ax.legend()
         ax.set_title(title)
 
         if show:

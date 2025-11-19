@@ -1,7 +1,7 @@
 from enum import Enum, auto
 
 import numpy as np
-from numpy._typing import NDArray
+from numpy.typing import NDArray
 from shewchuk import orientation
 
 from pycdt.utils import EPS, Vec2d, Triangle
