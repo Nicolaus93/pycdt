@@ -27,20 +27,22 @@ class TestSegmentsIntersect:
         assert segments_intersect(p1, p2, q1, q2)
 
     def test_touching_endpoints(self):
-        """Test segments that share an endpoint."""
+        """Test segments that share an endpoint - no proper crossing."""
         p1 = (0.0, 0.0)
         p2 = (1.0, 1.0)
         q1 = (1.0, 1.0)
         q2 = (2.0, 0.0)
-        assert segments_intersect(p1, p2, q1, q2)
+        # Only touching at endpoint, not a proper crossing
+        assert not segments_intersect(p1, p2, q1, q2)
 
     def test_collinear_overlapping_segments(self):
-        """Test collinear segments that overlap."""
+        """Test collinear segments that overlap - no proper crossing."""
         p1 = (0.0, 0.0)
         p2 = (2.0, 0.0)
         q1 = (1.0, 0.0)
         q2 = (3.0, 0.0)
-        assert segments_intersect(p1, p2, q1, q2)
+        # Collinear overlap is not a proper crossing
+        assert not segments_intersect(p1, p2, q1, q2)
 
     def test_collinear_non_overlapping_segments(self):
         """Test collinear segments that don't overlap."""
@@ -51,12 +53,13 @@ class TestSegmentsIntersect:
         assert not segments_intersect(p1, p2, q1, q2)
 
     def test_t_intersection(self):
-        """Test T-shaped intersection where one segment ends on another."""
+        """Test T-shaped intersection where one segment ends on another - no proper crossing."""
         p1 = (0.0, 0.0)
         p2 = (2.0, 0.0)
         q1 = (1.0, 0.0)
         q2 = (1.0, 1.0)
-        assert segments_intersect(p1, p2, q1, q2)
+        # One endpoint on the other segment is not a proper crossing
+        assert not segments_intersect(p1, p2, q1, q2)
 
     def test_perpendicular_non_intersecting(self):
         """Test perpendicular segments that don't intersect."""
